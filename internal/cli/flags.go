@@ -50,6 +50,7 @@ const (
 	keyOut     = "out"
 	keyPrefix  = "prefix"
 	keyForce   = "force"
+	keyMask    = "mask-addresses"
 )
 
 // Defaults, declared once so a flag and a config fallback cannot drift apart.
@@ -61,6 +62,7 @@ const (
 	defaultOutDir  = "testdata"
 	defaultPrefix  = ""
 	defaultForce   = false
+	defaultMask    = false
 )
 
 // discoveredConfigFiles are checked, in order, when --config is not given.
@@ -134,10 +136,13 @@ func (c *config) bindCaptureFlags(cmd *cobra.Command) {
 		"filename prefix; defaults to the record name")
 	flags.Bool(keyForce, defaultForce,
 		"overwrite fixture files that already exist")
+	flags.Bool(keyMask, defaultMask,
+		"replace public account addresses with deterministic mock accounts")
 
 	c.bind(flags, keyOut)
 	c.bind(flags, keyPrefix)
 	c.bind(flags, keyForce)
+	c.bind(flags, keyMask)
 }
 
 // bind attaches a declared flag to Viper. A missing flag is a programming
@@ -258,4 +263,10 @@ func (c *config) prefix() string {
 // force permits capture to overwrite existing fixtures.
 func (c *config) force() bool {
 	return c.v.GetBool(keyForce)
+}
+
+// maskAddresses replaces real account addresses in captured fixtures with
+// deterministic mock accounts.
+func (c *config) maskAddresses() bool {
+	return c.v.GetBool(keyMask)
 }

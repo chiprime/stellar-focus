@@ -80,6 +80,7 @@ precedence.`,
 
 	root.AddCommand(
 		newCaptureCmd(cfg, stdout, stderr),
+		newLedgerKeyCmd(stdout),
 		newVerifyCmd(cfg, stdout, stderr),
 		newVersionCmd(stdout),
 	)
@@ -96,6 +97,35 @@ func newVersionCmd(stdout io.Writer) *cobra.Command {
 			return err
 		},
 	}
+}
+
+func newLedgerKeyCmd(stdout io.Writer) *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "ledger-key",
+		Short: "Construct a base64 LedgerKey for capture",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return cmd.Help()
+		},
+	}
+	cmd.AddCommand(&cobra.Command{
+		Use:   "account <G...>",
+		Short: "Encode an account LedgerKey",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			key, err := capture.NewAccountLedgerKey(args[0])
+			if err != nil {
+				return err
+			}
+			encoded, err := capture.EncodeLedgerKey(key)
+			if err != nil {
+				return err
+			}
+			_, err = fmt.Fprintln(stdout, encoded)
+			return err
+		},
+	})
+	return cmd
 }
 
 func newCaptureCmd(cfg *config, stdout, stderr io.Writer) *cobra.Command {
@@ -125,7 +155,7 @@ can be re-checked later with focus verify.`,
 				return err
 			}
 			return writeFixtures(cmd.Context(), src, records,
-				cfg.outDir(), cfg.prefix(), cfg.force(), stdout)
+				cfg.outDir(), cfg.prefix(), cfg.force(), cfg.maskAddresses(), stdout)
 		},
 	}
 
@@ -145,7 +175,7 @@ can be re-checked later with focus verify.`,
 				return err
 			}
 			return writeFixtures(cmd.Context(), src, records,
-				cfg.outDir(), cfg.prefix(), cfg.force(), stdout)
+				cfg.outDir(), cfg.prefix(), cfg.force(), cfg.maskAddresses(), stdout)
 		},
 	}
 
@@ -161,9 +191,19 @@ func writeFixtures(
 	src capture.Source,
 	records []capture.Record,
 	outDir, prefix string,
-	force bool,
+	force, maskAddresses bool,
 	stdout io.Writer,
 ) error {
+	if maskAddresses {
+		masked, err := capture.Anonymize(records)
+		if err != nil {
+			return err
+		}
+		for i := range masked {
+			masked[i].Anonymized = true
+		}
+		records = masked
+	}
 	fixtures, err := capture.Capture(ctx, src, records, now())
 	if err != nil {
 		return err

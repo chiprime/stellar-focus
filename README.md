@@ -110,6 +110,9 @@ focus.AssertContractTrapped(t, result)
 
 // A trap, with the host's own explanation of it from the diagnostic stream.
 focus.AssertContractTrappedWith(t, tx, "Error(Contract, #4)")
+
+// The error itself: which category, and which code.
+focus.AssertContractError(t, meta, xdr.ScErrorTypeSceContract, 101)
 ```
 
 A non-match lists the events that *were* emitted, so you are not left guessing.
@@ -146,6 +149,44 @@ offline.
 now, so the same transaction simulated twice can report a different footprint
 and a different instruction count. Assert on a budget and a shape, not on an
 exact snapshot.
+`AssertContractError` answers the question a trap leaves open: not *that* the
+contract failed but *how*. It reads the Soroban return value and the host's
+error diagnostic, and names both sides of the comparison:
+
+```
+    contract_test.go:42: AssertContractError: got ScErrorTypeContract(101), want ScErrorTypeContract(404)
+```
+
+The code is the number the error carries: a contract's own code for
+`ScErrorTypeContract`, and the numeric value of an `xdr.ScErrorCode` for the
+host's categories — `uint32(xdr.ScErrorCodeScecMissingValue)` for a missing
+storage entry.
+
+### Typed memos, sources and signers
+
+The display forms (`"text: hello"`, `"id: 42"`) make a wrong memo *type* read
+like a wrong memo *value*, so the typed assertions name the value the way the
+caller holds it:
+
+```go
+focus.AssertMemoText(t, env, "invoice-42")
+focus.AssertMemoID(t, env, 42)
+focus.AssertMemoHash(t, env, hash)     // a hash memo or a return memo
+focus.AssertNoMemo(t, env)
+
+focus.AssertOperationSourceAccount(t, env, 0, "GABC…")   // empty want: no override
+
+focus.AssertSignedBy(t, env, "GABC…")                     // by public key
+focus.AssertSignatureHints(t, env, [4]byte{0xde, 0xad, 0xbe, 0xef})
+```
+
+An operation may name a source account of its own, which replaces the
+transaction's for that operation alone; an empty want asserts that it names
+none, and the failure says which account the operation falls back to.
+
+A Stellar signature carries a four-byte hint rather than a public key, so a
+signature is attributed to a signer by the hint the protocol derives from that
+signer's key — the last four bytes of it.
 
 ### Ignoring what legitimately varies
 
@@ -172,6 +213,27 @@ Two deliberate behaviours:
 - **An ignore pattern that matches nothing is reported as a failure**, even
   when the values are otherwise equal. A stale pattern is a test quietly
   weakening, and this is the only moment anyone would notice.
+
+### Comparing arrays as sets
+
+Some XDR arrays are ordered and some are not. The signatures on a multi-signed
+transaction arrive in signing order, which is not part of what the transaction
+means, and a positional comparison reports one difference per element for what
+is really the same envelope.
+
+```go
+focus.AssertEnvelopeEqualUnordered(t, want, got)   // signatures compared as a set
+focus.AssertEnvelopeEqual(t, want, got, focus.SortPath("**.Signatures"))
+```
+
+The arrays at the matching paths are sorted before the diff, so `[sigA, sigB]`
+and `[sigB, sigA]` compare equal. Everything else is still compared the usual
+way: a missing signature is still a difference.
+
+The same two deliberate behaviours apply. The paths that were compared as
+unordered sets are named in the failure output, and a sort pattern that
+matches no array is reported as a failure, because a rule that quietly does
+nothing is the same problem as a stale ignore pattern.
 
 ### `require` for fatal assertions
 

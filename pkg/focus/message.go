@@ -24,7 +24,14 @@ import (
 const maxInlineXDR = 24
 
 // diffMessage renders the failure text for a structural mismatch.
-func diffMessage(assertion string, want, got *lens.Value, changes []lens.Change, applied []string, c *config) string {
+func diffMessage(
+	assertion string,
+	want, got *lens.Value,
+	changes []lens.Change,
+	applied []string,
+	c *config,
+	sorts sortResult,
+) string {
 	var b strings.Builder
 
 	// Headline: the count is the first thing that tells you how bad it is.
@@ -33,6 +40,20 @@ func diffMessage(assertion string, want, got *lens.Value, changes []lens.Change,
 
 	if len(applied) > 0 {
 		fmt.Fprintf(&b, "(ignored: %s)\n", strings.Join(applied, ", "))
+	}
+
+	// An array that was compared as a set is named, so a reader can tell
+	// the difference between "these differ" and "these differ, and the order
+	// was not part of the comparison".
+	if len(sorts.unordered) > 0 {
+		fmt.Fprintf(&b, "(compared as unordered sets: %s)\n", strings.Join(sorts.unordered, ", "))
+	}
+
+	// A sort rule that matched nothing is reported here too: on a failing
+	// comparison it would otherwise be invisible.
+	if len(sorts.stale) > 0 {
+		fmt.Fprintf(&b, "(stale sort patterns, matched no array: %s)\n",
+			strings.Join(sorts.stale, ", "))
 	}
 
 	b.WriteString("\n")

@@ -127,6 +127,22 @@ func TestEveryMirrorReportsFatally(t *testing.T) {
 		{"SignatureThreshold", func(tb *faketb.TB) {
 			require.SignatureThreshold(tb, env, 1, "GCJNHFXJEQEY54NPKU4DBMT5WOBJUHMYSFBDAQF4OMTEGJN4BQU7ZST6")
 		}},
+		{"SignatureHints", func(tb *faketb.TB) {
+			require.SignatureHints(tb, env, [4]byte{0xde, 0xad, 0xbe, 0xef})
+		}},
+		{"SignedBy", func(tb *faketb.TB) {
+			require.SignedBy(tb, env, "GCJNHFXJEQEY54NPKU4DBMT5WOBJUHMYSFBDAQF4OMTEGJN4BQU7ZST6")
+		}},
+		{"ContractError", func(tb *faketb.TB) {
+			require.ContractError(tb, "bad", xdr.ScErrorTypeSceContract, 4)
+		}},
+		{"MemoText", func(tb *faketb.TB) { require.MemoText(tb, env, "nope") }},
+		{"MemoID", func(tb *faketb.TB) { require.MemoID(tb, env, 7) }},
+		{"MemoHash", func(tb *faketb.TB) { require.MemoHash(tb, env, [32]byte{}) }},
+		{"NoMemo", func(tb *faketb.TB) { require.NoMemo(tb, "bad") }},
+		{"OperationSourceAccount", func(tb *faketb.TB) {
+			require.OperationSourceAccount(tb, env, 0, "GWRONG")
+		}},
 	}
 
 	for _, tc := range tests {

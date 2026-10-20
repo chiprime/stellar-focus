@@ -44,7 +44,7 @@ pkg/focus/
   timebounds.go       time and ledger bound assertions
   memo.go             memo value assertions
   op_order.go         operation sequence assertions
-  signatures.go       signer presence and threshold assertions
+  signatures.go       signer presence, hint and threshold assertions
   results.go          transaction result-code assertions
   result_codes.go     per-operation result-code assertions
   ledger_entries.go   entry created/modified/deleted assertions
@@ -56,7 +56,7 @@ pkg/focus/
   clawback.go         clawback operations, forfeiture and revocation
   sponsorship.go      who pays an entry's reserve
   inflation.go        inflation payouts and ledger fee-pool assertions
-  soroban.go          events, return values
+  soroban.go          events, return values, contract errors
   traps.go            contract traps and the host diagnostics that explain them
   constructor.go      deployment state and owner binding (__constructor)
   diagnostic_order.go diagnostic stream order and timelines

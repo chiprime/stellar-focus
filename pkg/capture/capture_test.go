@@ -14,6 +14,33 @@ import (
 	"github.com/stellar-optics/stellar-focus/pkg/golden"
 )
 
+func TestNewAccountLedgerKey(t *testing.T) {
+	t.Parallel()
+
+	const address = "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF"
+	key, err := capture.NewAccountLedgerKey(address)
+	if err != nil {
+		t.Fatalf("NewAccountLedgerKey() error = %v", err)
+	}
+	if key.Type != 0 {
+		t.Fatalf("key type = %v, want account", key.Type)
+	}
+	encoded, err := capture.EncodeLedgerKey(key)
+	if err != nil {
+		t.Fatalf("EncodeLedgerKey() error = %v", err)
+	}
+	if encoded == "" {
+		t.Fatal("EncodeLedgerKey() returned an empty string")
+	}
+}
+
+func TestNewAccountLedgerKeyRejectsInvalidAddress(t *testing.T) {
+	t.Parallel()
+	if _, err := capture.NewAccountLedgerKey("not-an-account"); err == nil {
+		t.Fatal("NewAccountLedgerKey() accepted an invalid StrKey")
+	}
+}
+
 // capturedAt is fixed so fixtures produced by these tests are byte-stable.
 var capturedAt = time.Date(2026, 8, 5, 12, 0, 0, 0, time.UTC)
 
@@ -146,6 +173,56 @@ func TestVerifyMatches(t *testing.T) {
 	}
 	if !got.Match {
 		t.Errorf("Verify() reported a mismatch for unchanged data; diff = %v", got.Diff)
+	}
+}
+
+func TestCaptureBindsNetworkPassphraseAndVerifyChecksIt(t *testing.T) {
+	t.Parallel()
+
+	const hash = "abc123"
+	src := sourceWithTransaction(t, hash)
+	src.Passphrase = "Test SDF Network ; September 2015"
+	records, err := src.Transaction(context.Background(), hash)
+	if err != nil {
+		t.Fatalf("Transaction() error = %v", err)
+	}
+	fixtures, err := capture.Capture(context.Background(), src, records, capturedAt)
+	if err != nil {
+		t.Fatalf("Capture() error = %v", err)
+	}
+	if got := fixtures[0].Captured.NetworkPassphrase; got != src.Passphrase {
+		t.Fatalf("captured passphrase = %q, want %q", got, src.Passphrase)
+	}
+
+	src.Passphrase = "Public Global Stellar Network ; September 2015"
+	got := capture.Verify(context.Background(), src, "envelope.golden.json", fixtures[0])
+	if got.Err == nil || !strings.Contains(got.Err.Error(), "passphrase mismatch") {
+		t.Fatalf("Verify() error = %v, want passphrase mismatch", got.Err)
+	}
+}
+
+func TestVerifyRefusesAnonymizedFixturesWithoutFetching(t *testing.T) {
+	t.Parallel()
+
+	const hash = "abc123"
+	src := sourceWithTransaction(t, hash)
+	records, err := src.Transaction(context.Background(), hash)
+	if err != nil {
+		t.Fatalf("Transaction() error = %v", err)
+	}
+	records[0].Anonymized = true
+	fixtures, err := capture.Capture(context.Background(), src, records[:1], capturedAt)
+	if err != nil {
+		t.Fatalf("Capture() error = %v", err)
+	}
+	src.Calls = 0
+
+	got := capture.Verify(context.Background(), src, "masked.golden.json", fixtures[0])
+	if got.Err == nil || !strings.Contains(got.Err.Error(), "anonymized") {
+		t.Fatalf("Verify() error = %v, want anonymized fixture explanation", got.Err)
+	}
+	if src.Calls != 0 {
+		t.Errorf("Verify() fetched %d times for an anonymized fixture", src.Calls)
 	}
 }
 

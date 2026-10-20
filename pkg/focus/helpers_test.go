@@ -99,6 +99,27 @@ func buildEnvelopeSeq(t testing.TB, seq int64, ops ...xdr.Operation) string {
 	return mustMarshal(t, envelopeValueSeq(t, seq, ops...))
 }
 
+// envelopeWithSignatures builds a v1 envelope carrying the given signatures,
+// in the order they are given.
+//
+// The signatures stand in for real ones: what matters to a comparison is that
+// they are distinct and that their order can be changed. Each signature
+// carries its own hint, so reordering the signatures produces the same
+// elements in a different order rather than different elements.
+func envelopeWithSignatures(t testing.TB, signatures ...[]byte) string {
+	t.Helper()
+
+	env := envelopeValue(t, paymentOp(t, 100))
+	env.V1.Signatures = make([]xdr.DecoratedSignature, 0, len(signatures))
+	for _, sig := range signatures {
+		env.V1.Signatures = append(env.V1.Signatures, xdr.DecoratedSignature{
+			Hint:      xdr.SignatureHint{sig[0], sig[1], sig[2], sig[3]},
+			Signature: xdr.Signature(sig),
+		})
+	}
+	return mustMarshal(t, env)
+}
+
 // buildResult returns a base64 TransactionResult with the given code and
 // per-operation results.
 func buildResult(t testing.TB, code xdr.TransactionResultCode, ops ...xdr.OperationResult) string {

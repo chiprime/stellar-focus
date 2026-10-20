@@ -15,10 +15,12 @@
       "additionalProperties": false,
       "properties": {
         "network": {"type": "string", "minLength": 1},
+        "networkPassphrase": {"type": "string"},
         "ledger": {"type": "integer", "minimum": 0, "maximum": 4294967295},
         "txHash": {"type": "string"},
         "at": {"type": "string", "format": "date-time"},
-        "endpoint": {"type": "string"}
+        "endpoint": {"type": "string"},
+        "anonymized": {"type": "boolean"}
       }
     },
     "decoded": {}

@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/stellar/go-stellar-sdk/xdr"
+
 	"github.com/stellar-optics/stellar-xdr-lens/pkg/lens"
 )
 
@@ -172,6 +174,113 @@ func AssertSignatureCount(t TB, envelope Value, want int) bool {
 		return false
 	}
 	return true
+}
+
+// AssertOperationSourceAccount checks the source account of the operation at
+// opIndex.
+//
+// An operation may name a source account of its own, and that account then
+// replaces the transaction's source account for that operation alone. An
+// operation that names none inherits the transaction's.
+//
+// want is the strkey of the account the operation is sourced from. An empty
+// want asserts that the operation names no source account of its own.
+//
+// The two are different questions, so the failure says which one it
+// answered: an operation with no source account of its own is sourced from
+// the transaction's source account, and the message names that account rather
+// than leaving the reader to work it out.
+//
+// A muxed source account is reported in its "M…" form. The account it is a
+// muxed form of is accepted as well, because the muxed id says which account
+// was used, not whose account it is.
+func AssertOperationSourceAccount(t TB, envelope Value, opIndex int, want string) bool {
+	t.Helper()
+	const assertion = "AssertOperationSourceAccount"
+
+	env, _, ok := envelopeFrom(t, assertion, envelope)
+	if !ok {
+		return false
+	}
+
+	var (
+		ops      []xdr.Operation
+		txSource string
+	)
+	if !guard(t, assertion, func() {
+		ops = env.Operations()
+		txSource = envelopeSource(env)
+	}) {
+		return false
+	}
+	if opIndex < 0 || opIndex >= len(ops) {
+		t.Errorf("%s: no operation at index %d; the transaction has %d operation(s)",
+			assertion, opIndex, len(ops))
+		return false
+	}
+
+	source := ops[opIndex].SourceAccount
+	if source == nil {
+		if want == "" {
+			return true
+		}
+		t.Errorf("%s: operation %d names no source account of its own, so it is sourced from the "+
+			"transaction's source account %s.\nPass an empty want to assert that the operation names "+
+			"no source account of its own.", assertion, opIndex, txSource)
+		return false
+	}
+
+	names, err := muxedAccountNames(*source)
+	if err != nil {
+		t.Errorf("%s: operation %d has a source account that could not be read: %v", assertion, opIndex, err)
+		return false
+	}
+
+	if want == "" {
+		t.Errorf("%s: operation %d is sourced from %s, want no source account of its own",
+			assertion, opIndex, names[0])
+		return false
+	}
+	for _, name := range names {
+		if name == want {
+			return true
+		}
+	}
+
+	t.Errorf("%s", mismatchMessage(assertion,
+		fmt.Sprintf("source account of operation %d", opIndex), want, names[0]))
+	return false
+}
+
+// muxedAccountNames renders the strkeys an account can be named by: its own,
+// and, for a muxed account, the account it is a muxed form of.
+func muxedAccountNames(m xdr.MuxedAccount) ([]string, error) {
+	own, err := m.GetAddress()
+	if err != nil {
+		return nil, err
+	}
+	names := []string{own}
+
+	if m.Type == xdr.CryptoKeyTypeKeyTypeMuxedEd25519 {
+		account := m.ToAccountId()
+		if plain, err := account.GetAddress(); err == nil && plain != own {
+			names = append(names, plain)
+		}
+	}
+	return names, nil
+}
+
+// envelopeSource renders the source account of an envelope, which for a
+// fee-bump envelope is the inner transaction's.
+//
+// It reads a generated accessor, so it runs behind guard.
+func envelopeSource(env *xdr.TransactionEnvelope) string {
+	source := env.SourceAccount()
+	addr, err := source.GetAddress()
+	if err != nil {
+		return "(unreadable)"
+	}
+	return addr
 }
 
 // AssertFeeBump checks whether the transaction is wrapped in a fee bump.

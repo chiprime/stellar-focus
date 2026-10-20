@@ -23,14 +23,30 @@ import (
 // for a text memo on a transaction with an id memo is a normal failure, not an
 // input error, and the failure says which memo it found.
 
-// AssertMemoTextEqual checks that the transaction carries a text memo with
+// AssertMemoText checks that the transaction carries a text memo with
 // exactly this text.
 //
 // The protocol caps a text memo at 28 bytes, so a longer want can never match
 // and the failure says so rather than leaving the reader to discover the cap.
+func AssertMemoText(t TB, envelope Value, want string) bool {
+	t.Helper()
+	return assertMemoText(t, "AssertMemoText", envelope, want)
+}
+
+// AssertMemoTextEqual checks that the transaction carries a text memo with
+// exactly this text.
+//
+// It is AssertMemoText under the name the other typed memo assertions use,
+// and behaves identically.
 func AssertMemoTextEqual(t TB, envelope Value, want string) bool {
 	t.Helper()
-	const assertion = "AssertMemoTextEqual"
+	return assertMemoText(t, "AssertMemoTextEqual", envelope, want)
+}
+
+// assertMemoText is the shared implementation behind the text memo
+// assertions.
+func assertMemoText(t TB, assertion string, envelope Value, want string) bool {
+	t.Helper()
 
 	memo, decoded, ok := resolveMemo(t, assertion, envelope)
 	if !ok {
@@ -64,11 +80,26 @@ func AssertMemoTextEqual(t TB, envelope Value, want string) bool {
 	return false
 }
 
+// AssertMemoID checks that the transaction carries an id memo with exactly
+// this id. Id memos hold a uint64.
+func AssertMemoID(t TB, envelope Value, want uint64) bool {
+	t.Helper()
+	return assertMemoID(t, "AssertMemoID", envelope, want)
+}
+
 // AssertMemoIDEqual checks that the transaction carries an id memo with
 // exactly this id. Id memos hold a uint64.
+//
+// It is AssertMemoID under the name the other typed memo assertions use, and
+// behaves identically.
 func AssertMemoIDEqual(t TB, envelope Value, want uint64) bool {
 	t.Helper()
-	const assertion = "AssertMemoIDEqual"
+	return assertMemoID(t, "AssertMemoIDEqual", envelope, want)
+}
+
+// assertMemoID is the shared implementation behind the id memo assertions.
+func assertMemoID(t TB, assertion string, envelope Value, want uint64) bool {
+	t.Helper()
 
 	memo, decoded, ok := resolveMemo(t, assertion, envelope)
 	if !ok {
@@ -97,6 +128,18 @@ func AssertMemoIDEqual(t TB, envelope Value, want uint64) bool {
 	return false
 }
 
+// AssertMemoHash checks that the transaction carries a hash memo with
+// exactly these 32 bytes.
+//
+// A hash memo and a return memo hold the same thing — a 32-byte hash — and
+// differ only in what they are for, so either satisfies this assertion. Use
+// AssertMemoHashEqual or AssertMemoReturnEqual to insist on one of the two.
+func AssertMemoHash(t TB, envelope Value, want [32]byte) bool {
+	t.Helper()
+	return assertMemoHash(t, "AssertMemoHash", envelope, xdr.Hash(want),
+		xdr.MemoTypeMemoHash, xdr.MemoTypeMemoReturn)
+}
+
 // AssertMemoHashEqual checks that the transaction carries a hash memo with
 // exactly these 32 bytes.
 //
@@ -104,7 +147,14 @@ func AssertMemoIDEqual(t TB, envelope Value, want uint64) bool {
 // characters, in either case.
 func AssertMemoHashEqual(t TB, envelope Value, want Value) bool {
 	t.Helper()
-	return assertMemoHashEqual(t, "AssertMemoHashEqual", envelope, want, xdr.MemoTypeMemoHash)
+	const assertion = "AssertMemoHashEqual"
+
+	wantHash, err := hashFrom(want)
+	if err != nil {
+		t.Errorf("%s: want could not be read as a %s: %v", assertion, memoKind(xdr.MemoTypeMemoHash), err)
+		return false
+	}
+	return assertMemoHash(t, assertion, envelope, wantHash, xdr.MemoTypeMemoHash)
 }
 
 // AssertMemoReturnEqual checks that the transaction carries a return memo with
@@ -113,27 +163,31 @@ func AssertMemoHashEqual(t TB, envelope Value, want Value) bool {
 // It accepts the same forms as AssertMemoHashEqual.
 func AssertMemoReturnEqual(t TB, envelope Value, want Value) bool {
 	t.Helper()
-	return assertMemoHashEqual(t, "AssertMemoReturnEqual", envelope, want, xdr.MemoTypeMemoReturn)
-}
-
-// assertMemoHashEqual is the shared implementation behind the hash and return
-// memo assertions, whose values are both 32-byte hashes.
-func assertMemoHashEqual(t TB, assertion string, envelope, want Value, kind xdr.MemoType) bool {
-	t.Helper()
+	const assertion = "AssertMemoReturnEqual"
 
 	wantHash, err := hashFrom(want)
 	if err != nil {
-		t.Errorf("%s: want could not be read as a %s: %v", assertion, memoKind(kind), err)
+		t.Errorf("%s: want could not be read as a %s: %v", assertion, memoKind(xdr.MemoTypeMemoReturn), err)
 		return false
 	}
+	return assertMemoHash(t, assertion, envelope, wantHash, xdr.MemoTypeMemoReturn)
+}
+
+// assertMemoHash is the shared implementation behind the hash assertions,
+// whose values are all 32-byte hashes.
+//
+// The kinds are the memo types that satisfy the assertion: one for the
+// assertions that insist on a single type, two for the one that accepts
+// either.
+func assertMemoHash(t TB, assertion string, envelope Value, want xdr.Hash, kinds ...xdr.MemoType) bool {
+	t.Helper()
 
 	memo, decoded, ok := resolveMemo(t, assertion, envelope)
 	if !ok {
 		return false
 	}
-	if memo.Type != kind {
-		t.Errorf("%s", memoMismatch(assertion, memo, decoded,
-			fmt.Sprintf("a %s %s", memoKind(kind), wantHash.HexString())))
+	if !memoTypeIn(memo.Type, kinds) {
+		t.Errorf("%s", memoMismatch(assertion, memo, decoded, describeWantedHash(want, kinds)))
 		return false
 	}
 
@@ -141,23 +195,70 @@ func assertMemoHashEqual(t TB, assertion string, envelope, want Value, kind xdr.
 		got  xdr.Hash
 		read bool
 	)
-	if !guard(t, assertion, func() { got, read = memoHash(memo, kind) }) {
+	if !guard(t, assertion, func() { got, read = memoHash(memo, memo.Type) }) {
 		return false
 	}
 	if !read {
-		t.Errorf("%s: the %s could not be read; its XDR is malformed", assertion, memoKind(kind))
+		t.Errorf("%s: the %s could not be read; its XDR is malformed", assertion, memoKind(memo.Type))
 		return false
 	}
-	if got == wantHash {
+	if got == want {
 		return true
 	}
 
 	var b strings.Builder
-	fmt.Fprintf(&b, "%s: %s memo differs\n\n", assertion, memoKind(kind))
+	fmt.Fprintf(&b, "%s: %s memo differs\n\n", assertion, memoKind(memo.Type))
 	fmt.Fprintf(&b, "  got   %s\n", got.HexString())
-	fmt.Fprintf(&b, "  want  %s", wantHash.HexString())
+	fmt.Fprintf(&b, "  want  %s", want.HexString())
 	t.Errorf("%s", b.String())
 	return false
+}
+
+// AssertNoMemo checks that the transaction carries no memo.
+//
+// A transaction with a memo and one without it are different transactions —
+// the memo is what a caller reads to recognise their own transaction — so
+// "no memo" is worth stating rather than leaving implicit.
+func AssertNoMemo(t TB, envelope Value) bool {
+	t.Helper()
+	const assertion = "AssertNoMemo"
+
+	memo, decoded, ok := resolveMemo(t, assertion, envelope)
+	if !ok {
+		return false
+	}
+	if memo.Type == xdr.MemoTypeMemoNone {
+		return true
+	}
+	t.Errorf("%s: %s, want no memo", assertion, describeMemoFor(memo, decoded))
+	return false
+}
+
+// memoTypeIn reports whether a memo type is one of the wanted kinds.
+func memoTypeIn(t xdr.MemoType, kinds []xdr.MemoType) bool {
+	for _, k := range kinds {
+		if t == k {
+			return true
+		}
+	}
+	return false
+}
+
+// describeWantedHash names the hash memo an assertion expected, and the memo
+// types that satisfy it.
+func describeWantedHash(want xdr.Hash, kinds []xdr.MemoType) string {
+	switch len(kinds) {
+	case 0:
+		return "a memo " + want.HexString()
+	case 1:
+		return fmt.Sprintf("a %s %s", memoKind(kinds[0]), want.HexString())
+	default:
+		names := make([]string, 0, len(kinds))
+		for _, k := range kinds {
+			names = append(names, memoKind(k))
+		}
+		return fmt.Sprintf("a %s memo %s", strings.Join(names, " or "), want.HexString())
+	}
 }
 
 // memoHash reads the hash arm a hash or return memo carries. It calls

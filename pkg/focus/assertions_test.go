@@ -1,11 +1,14 @@
 package focus_test
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/stellar/go-stellar-sdk/xdr"
+
+	"github.com/stellar-optics/stellar-xdr-lens/pkg/lens"
 
 	"github.com/stellar-optics/stellar-focus/internal/faketb"
 	"github.com/stellar-optics/stellar-focus/pkg/focus"
@@ -341,6 +344,114 @@ func TestAssertContractTrapped(t *testing.T) {
 	}
 }
 
+// TestUnorderedSignatureComparison covers the multi-sig case: the same
+// envelope signed in a different order is the same envelope, and a comparison
+// that says so must not hide a signature that is actually missing.
+func TestUnorderedSignatureComparison(t *testing.T) {
+	t.Parallel()
+
+	sigA := []byte{1, 2, 3, 4}
+	sigB := []byte{5, 6, 7, 8}
+
+	want := envelopeWithSignatures(t, sigA, sigB)
+	got := envelopeWithSignatures(t, sigB, sigA)
+
+	t.Run("order alone is a difference", func(t *testing.T) {
+		t.Parallel()
+
+		tb := faketb.New()
+		if focus.AssertEnvelopeEqual(tb, want, got) {
+			t.Fatal("envelopes with reordered signatures compared equal")
+		}
+		msg, err := tb.Message()
+		if err != nil {
+			t.Fatalf("%v", err)
+		}
+		if !strings.Contains(msg, "Signatures") {
+			t.Errorf("the diff does not name the signatures:\n%s", msg)
+		}
+	})
+
+	t.Run("unordered wrapper passes", func(t *testing.T) {
+		t.Parallel()
+
+		tb := faketb.New()
+		if !focus.AssertEnvelopeEqualUnordered(tb, want, got) {
+			t.Errorf("reordered signatures were reported as a difference:\n%s", tb.Output())
+		}
+	})
+
+	t.Run("SortPath does the same", func(t *testing.T) {
+		t.Parallel()
+
+		tb := faketb.New()
+		if !focus.AssertEnvelopeEqual(tb, want, got, focus.SortPath("**.Signatures")) {
+			t.Errorf("SortPath did not treat the signatures as a set:\n%s", tb.Output())
+		}
+	})
+
+	t.Run("a missing signature is still a difference", func(t *testing.T) {
+		t.Parallel()
+
+		other := envelopeWithSignatures(t, sigA, []byte{9, 9, 9, 9})
+		tb := faketb.New()
+		if focus.AssertEnvelopeEqualUnordered(tb, want, other) {
+			t.Fatal("a missing signature was reported as equal")
+		}
+		msg, err := tb.Message()
+		if err != nil {
+			t.Fatalf("%v", err)
+		}
+		// The failure says how the array was compared, so a reader knows the
+		// order was not the problem.
+		if !strings.Contains(msg, "compared as unordered sets") {
+			t.Errorf("the failure does not say the array was unordered:\n%s", msg)
+		}
+		if !strings.Contains(msg, "Signatures") {
+			t.Errorf("the failure does not name the signatures:\n%s", msg)
+		}
+	})
+
+	t.Run("a sort pattern that matches nothing is reported", func(t *testing.T) {
+		t.Parallel()
+
+		tb := faketb.New()
+		if focus.AssertEnvelopeEqual(tb, want, want, focus.SortPath("**.SignaturesTypo")) {
+			t.Fatal("a sort pattern that matched nothing was accepted silently")
+		}
+		msg, err := tb.Message()
+		if err != nil {
+			t.Fatalf("%v", err)
+		}
+		if !strings.Contains(msg, "sort patterns matched no array") {
+			t.Errorf("the stale pattern was not reported:\n%s", msg)
+		}
+		if !strings.Contains(msg, "**.SignaturesTypo") {
+			t.Errorf("the stale pattern is not named:\n%s", msg)
+		}
+	})
+
+	t.Run("the caller's value is not reordered", func(t *testing.T) {
+		t.Parallel()
+
+		decoded, err := lens.Decode(want)
+		if err != nil {
+			t.Fatalf("decoding: %v", err)
+		}
+		before := fmt.Sprintf("%v", decoded.Node.Child("V1").Child("Signatures").Children[0].Child("Signature").Value)
+
+		tb := faketb.New()
+		if !focus.AssertEnvelopeEqualUnordered(tb, decoded, decoded) {
+			t.Errorf("a value compared with itself failed:\n%s", tb.Output())
+		}
+
+		after := fmt.Sprintf("%v", decoded.Node.Child("V1").Child("Signatures").Children[0].Child("Signature").Value)
+		if before != after {
+			t.Errorf("the assertion reordered the caller's value: %v became %v", before, after)
+		}
+	})
+}
+
 // TestRequireUsesFatalf checks the documented difference between the two
 // packages: focus reports, require stops.
 func TestRequireUsesFatalf(t *testing.T) {
@@ -383,6 +494,8 @@ func TestAssertionsNeverPanic(t *testing.T) {
 		tb := faketb.New()
 		// Each of these must report rather than panic.
 		focus.AssertEnvelopeEqual(tb, v, v)
+		focus.AssertEnvelopeEqualUnordered(tb, v, v)
+		focus.AssertEnvelopeEqual(tb, v, v, focus.SortPath("**.Signatures"))
 		focus.AssertResultEqual(tb, v, v)
 		focus.AssertMetaEqual(tb, v, v)
 		focus.AssertEqual(tb, v, v)
@@ -444,9 +557,17 @@ func TestAssertionsNeverPanic(t *testing.T) {
 		focus.AssertMemoIDEqual(tb, v, 0)
 		focus.AssertMemoHashEqual(tb, v, "")
 		focus.AssertMemoReturnEqual(tb, v, "")
+		focus.AssertMemoText(tb, v, "")
+		focus.AssertMemoID(tb, v, 0)
+		focus.AssertMemoHash(tb, v, [32]byte{})
+		focus.AssertNoMemo(tb, v)
 		focus.AssertOperationSequence(tb, v, nil)
+		focus.AssertOperationSourceAccount(tb, v, 0, "G")
 		focus.AssertSignaturesPresent(tb, v, "G")
 		focus.AssertSignatureThreshold(tb, v, 1, "G")
+		focus.AssertSignatureHints(tb, v, [4]byte{})
+		focus.AssertSignedBy(tb, v, "G")
+		focus.AssertContractError(tb, v, xdr.ScErrorTypeSceContract, 4)
 		focus.AssertDiagnosticEventOrder(tb, v, []focus.DiagnosticEventMatch{{Kind: focus.DiagnosticFnCall}})
 		focus.AssertDiagnosticEventTimeline(tb, v, focus.DiagnosticTimeline{
 			Ledger:   3966820,

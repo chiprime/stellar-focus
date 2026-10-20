@@ -32,6 +32,21 @@ func AssertEnvelopeEqual(t TB, want, got Value, opts ...Option) bool {
 	return assertEqual(t, "AssertEnvelopeEqual", "TransactionEnvelope", want, got, opts...)
 }
 
+// AssertEnvelopeEqualUnordered compares two transaction envelopes, treating
+// their signatures as an unordered set.
+//
+// A multi-signed transaction carries its signatures in signing order, and that
+// order is not part of what the transaction means. This wrapper compares the
+// envelope as if it did not, so a test that only cares that both signatures
+// are present is not failed by the order they arrived in.
+//
+// Everything else is still compared the usual way: a missing signature is
+// still a difference.
+func AssertEnvelopeEqualUnordered(t TB, want, got Value, opts ...Option) bool {
+	t.Helper()
+	return AssertEnvelopeEqual(t, want, got, append([]Option{SortPath("**.Signatures")}, opts...)...)
+}
+
 // AssertResultEqual compares two transaction results.
 func AssertResultEqual(t TB, want, got Value, opts ...Option) bool {
 	t.Helper()
@@ -59,6 +74,11 @@ func assertEqual(t TB, assertion, typeName string, want, got Value, opts ...Opti
 
 	c := newConfig(opts...)
 
+	// Sorting happens before the diff, because the diff is positional: the
+	// order has to be taken out of the two trees rather than patched
+	// afterwards.
+	wantValue, gotValue, sorts := c.sortValues(wantValue, gotValue)
+
 	var (
 		diff    *lens.DiffResult
 		diffErr error
@@ -85,10 +105,17 @@ func assertEqual(t TB, assertion, typeName string, want, got Value, opts ...Opti
 				"and are probably stale: %v", assertion, unused)
 			return false
 		}
+		// The same goes for a sort rule that matched no array: it compared
+		// nothing as an unordered set, which is not what it says it does.
+		if len(sorts.stale) > 0 {
+			t.Errorf("%s: values match, but these sort patterns matched no array "+
+				"and are probably stale: %v", assertion, sorts.stale)
+			return false
+		}
 		return true
 	}
 
-	t.Errorf("%s", diffMessage(assertion, wantValue, gotValue, kept, applied, c))
+	t.Errorf("%s", diffMessage(assertion, wantValue, gotValue, kept, applied, c, sorts))
 	return false
 }
 

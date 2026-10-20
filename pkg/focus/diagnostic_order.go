@@ -41,6 +41,10 @@ const (
 	// DiagnosticContract is a contract event carried in the diagnostic stream,
 	// which is where the events of a failed call survive.
 	DiagnosticContract = "contract"
+	// DiagnosticError is the host saying the call died. Its payload is the
+	// ScError the invocation failed with, which is the only place the reason
+	// for a trap survives.
+	DiagnosticError = "error"
 	// DiagnosticSystem is a system event, emitted by the protocol rather than
 	// by a contract.
 	DiagnosticSystem = "system"

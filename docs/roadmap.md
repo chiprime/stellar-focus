@@ -9,18 +9,24 @@ Working and tested:
 - Structural equality assertions for envelopes, results and metas, with
   failure output that names the changed field path
 - Field assertions: source, fee, sequence, memo, operation counts and types,
-  signature count, fee-bump
+  signature count, fee-bump, and the source account an individual operation
+  names — including the account it falls back to when it names none
 - Time- and ledger-bound assertions, comparing the window a precondition sets
   against the window a test expects
-- Memo assertions by value: text, ID, 32-byte hash and return memos
+- Memo assertions by value: text, ID, 32-byte hash and return memos, each in
+  the form the caller already holds it, plus the assertion that there is none
 - Operation-sequence assertions, matching the exact ordered operation types
 - Signer assertions: which keys attached a signature — including pre-auth-tx,
   hash-x and signed-payload signers, and both signature sets of a fee-bump
-  envelope — plus M-of-N signature thresholds
+  envelope — plus M-of-N signature thresholds, and the same question asked by
+  four-byte signature hint
 - Result assertions using Horizon's short codes, with lens's plain-English
   explanation and hint; operation result codes can be checked by short name,
   and an unknown code or an XDR constant name is called out as such
 - Soroban: event matching, event counts, return values, contract traps
+- Contract errors by category and code: the `ScError` a failed invocation
+  recorded — a contract's own error code, or one of the host's named codes —
+  read from the Soroban return value or from the host's error diagnostic
 - Contract traps explained from the host's own diagnostics: the result proves
   the trap and the diagnostic stream says why — `Error(Contract, #4)`,
   `Error(WasmVm, InvalidAction)` and the rest — read from a `getTransaction`
@@ -62,6 +68,8 @@ Working and tested:
 - `require` mirrors with `Fatalf` semantics, with 100% parity enforced by an
   AST audit (`pkg/focus/require/audit.go`)
 - Golden files in reviewable JSON, with `-focus.update`
+- Golden comparisons that normalize volatile sequence and time fields by
+  default, with an opt-out, plus a benchmark of the structural comparison path
 - Fixtures in JSON, YAML or plain text — chosen by file extension, or with
   `WithFormat` — all three lossless, deterministic and whitespace-normalized,
   with the text form using lens's dotted-path vocabulary

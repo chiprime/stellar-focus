@@ -46,7 +46,7 @@ var capturedAt = time.Date(2026, 8, 5, 12, 0, 0, 0, time.UTC)
 
 func envelopeXDR(t *testing.T) string {
 	t.Helper()
-	b, err := os.ReadFile(filepath.Join("..", "..", "testdata", "tx_failed.env.txt"))
+	b, err := os.ReadFile(filepath.Join("..", "..", "pkg", "fuzz", "testdata", "tx_failed.env.txt"))
 	if err != nil {
 		t.Fatalf("reading fixture: %v", err)
 	}
@@ -55,7 +55,7 @@ func envelopeXDR(t *testing.T) string {
 
 func resultXDR(t *testing.T) string {
 	t.Helper()
-	b, err := os.ReadFile(filepath.Join("..", "..", "testdata", "tx_failed.res.txt"))
+	b, err := os.ReadFile(filepath.Join("..", "..", "pkg", "fuzz", "testdata", "tx_failed.res.txt"))
 	if err != nil {
 		t.Fatalf("reading fixture: %v", err)
 	}
@@ -342,6 +342,46 @@ func TestResolveEndpoint(t *testing.T) {
 	}
 }
 
+// TestResolveHorizonEndpoint checks that the Horizon defaults are their
+// own, since a Horizon endpoint and an RPC endpoint are different
+// services.
+func TestResolveHorizonEndpoint(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		network  string
+		override string
+		want     string
+		wantErr  bool
+	}{
+		{"testnet default", capture.NetworkTestnet, "", capture.DefaultHorizonEndpoints[capture.NetworkTestnet], false},
+		{"mainnet default", capture.NetworkMainnet, "", capture.DefaultHorizonEndpoints[capture.NetworkMainnet], false},
+		{"override wins", capture.NetworkTestnet, "http://localhost:8000", "http://localhost:8000", false},
+		{"unknown network", "wonderland", "", "", true},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			got, err := capture.ResolveHorizonEndpoint(tc.network, tc.override)
+			if tc.wantErr {
+				if err == nil {
+					t.Fatal("ResolveHorizonEndpoint() error = nil, want an error")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("ResolveHorizonEndpoint() error = %v", err)
+			}
+			if got != tc.want {
+				t.Errorf("ResolveHorizonEndpoint() = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
 // TestDefaultIsTestnet guards against a tool that reaches for mainnet unless
 // told otherwise.
 func TestDefaultIsTestnet(t *testing.T) {
@@ -354,7 +394,7 @@ func TestDefaultIsTestnet(t *testing.T) {
 
 func fixtureFromFile(t *testing.T, name string) string {
 	t.Helper()
-	b, err := os.ReadFile(filepath.Join("..", "..", "testdata", name))
+	b, err := os.ReadFile(filepath.Join("..", "..", "pkg", "fuzz", "testdata", name))
 	if err != nil {
 		t.Fatalf("reading %s: %v", name, err)
 	}

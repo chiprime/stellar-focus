@@ -284,7 +284,7 @@ func TestE2EExplicitMissingConfigFails(t *testing.T) {
 func writeHandWrittenFixture(t *testing.T, dir string) string {
 	t.Helper()
 
-	payload, err := os.ReadFile(filepath.Join("..", "..", "testdata", "tx_failed.env.txt"))
+	payload, err := os.ReadFile(filepath.Join("..", "..", "pkg", "fuzz", "testdata", "tx_failed.env.txt"))
 	if err != nil {
 		t.Fatalf("reading the envelope fixture: %v", err)
 	}

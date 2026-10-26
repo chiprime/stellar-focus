@@ -14,8 +14,8 @@ import (
 func TestAssertTrustlineModified(t *testing.T) {
 	t.Parallel()
 
-	before := trustlineEntryValue(t, testDest, "USDC", 100, 1000)
-	after := trustlineEntryValue(t, testDest, "USDC", 100, 2000)
+	before := trustlineEntryValue(t, 100, 1000)
+	after := trustlineEntryValue(t, 100, 2000)
 	meta := metaV2(t, []xdr.LedgerEntryChange{stateChange(before), updatedChange(after)})
 
 	tests := []struct {
@@ -25,7 +25,7 @@ func TestAssertTrustlineModified(t *testing.T) {
 	}{
 		{"strkey and canonical asset", testDest, usdcAsset},
 		{"muxed account", mustMuxed(t, testDest), usdcAsset},
-		{"xdr trustline asset", testDest, trustLineAsset(t, "USDC")},
+		{"xdr trustline asset", testDest, trustLineAsset(t)},
 		{"xdr asset", testDest, mustCreditAsset(t, "USDC")},
 	}
 
@@ -43,8 +43,8 @@ func TestAssertTrustlineModified(t *testing.T) {
 	t.Run("a balance-only change keeps the limit", func(t *testing.T) {
 		t.Parallel()
 
-		drained := trustlineEntryValue(t, testDest, "USDC", 0, 1000)
-		paid := trustlineEntryValue(t, testDest, "USDC", 100, 1000)
+		drained := trustlineEntryValue(t, 0, 1000)
+		paid := trustlineEntryValue(t, 100, 1000)
 		tb := faketb.New()
 		if !focus.AssertTrustlineModified(tb,
 			metaV2(t, []xdr.LedgerEntryChange{stateChange(drained), updatedChange(paid)}),
@@ -56,7 +56,7 @@ func TestAssertTrustlineModified(t *testing.T) {
 	t.Run("creation counts as a modification", func(t *testing.T) {
 		t.Parallel()
 
-		created := trustlineEntryValue(t, testDest, "USDC", 0, 5000)
+		created := trustlineEntryValue(t, 0, 5000)
 		tb := faketb.New()
 		if !focus.AssertTrustlineModified(tb,
 			metaV2(t, []xdr.LedgerEntryChange{createdChange(created)}),
@@ -68,8 +68,8 @@ func TestAssertTrustlineModified(t *testing.T) {
 	t.Run("two changes take the last limit", func(t *testing.T) {
 		t.Parallel()
 
-		raised := trustlineEntryValue(t, testDest, "USDC", 100, 2000)
-		final := trustlineEntryValue(t, testDest, "USDC", 100, 3000)
+		raised := trustlineEntryValue(t, 100, 2000)
+		final := trustlineEntryValue(t, 100, 3000)
 		tb := faketb.New()
 		if !focus.AssertTrustlineModified(tb, metaV2(t,
 			[]xdr.LedgerEntryChange{stateChange(before), updatedChange(raised)},
@@ -105,8 +105,8 @@ func TestAssertTrustlineModified(t *testing.T) {
 func TestAssertTrustlineModifiedFailures(t *testing.T) {
 	t.Parallel()
 
-	before := trustlineEntryValue(t, testDest, "USDC", 100, 1000)
-	after := trustlineEntryValue(t, testDest, "USDC", 150, 1000)
+	before := trustlineEntryValue(t, 100, 1000)
+	after := trustlineEntryValue(t, 150, 1000)
 
 	t.Run("untouched trustline names what did happen", func(t *testing.T) {
 		t.Parallel()

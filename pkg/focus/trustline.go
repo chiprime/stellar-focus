@@ -45,7 +45,7 @@ func AssertTrustlineModified(t TB, meta Value, account Value, asset Value, expec
 	}
 	if !mod.modified {
 		t.Errorf("AssertTrustlineModified: the transaction did not modify trustline %s on account %s\n\n%s",
-			spec.id, shorten(addr), indent(describeAccountChanges(changes, addr), "  "))
+			spec.id, shorten(addr), indent(describeAccountChanges(changes, addr)))
 		return false
 	}
 	if int64(mod.limit) == expectedLimit {

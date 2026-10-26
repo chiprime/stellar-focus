@@ -105,10 +105,10 @@ func logEvent(msg string, inSuccessfulCall bool) xdr.DiagnosticEvent {
 
 // contractEventInDiag is a contract event as it appears in the diagnostic
 // stream, which is where the events of a failed call survive.
-func contractEventInDiag(topic string, data uint32, inSuccessfulCall bool) xdr.DiagnosticEvent {
+func contractEventInDiag(inSuccessfulCall bool) xdr.DiagnosticEvent {
 	id := testContractID
-	return diagnosticEvent(diagContractEvent(xdr.ContractEventTypeContract, &id, diagU32(data),
-		diagSymbol(topic)), inSuccessfulCall)
+	return diagnosticEvent(diagContractEvent(xdr.ContractEventTypeContract, &id, diagU32(7),
+		diagSymbol("transfer")), inSuccessfulCall)
 }
 
 // systemEvent is emitted by the protocol rather than a contract, so it
@@ -168,7 +168,7 @@ func nestedStream(t *testing.T) []xdr.DiagnosticEvent {
 	t.Helper()
 	return []xdr.DiagnosticEvent{
 		fnCall("transfer", true),
-		contractEventInDiag("transfer", 7, true),
+		contractEventInDiag(true),
 		logEvent("minting", true),
 		fnCall("mint", true),
 		fnReturn("mint", diagU32(1), true),
@@ -234,8 +234,8 @@ func TestDiagnosticEvents(t *testing.T) {
 	if events[6].ContractID != "" {
 		t.Errorf("the system event belongs to %q, want no contract", events[6].ContractID)
 	}
-	if events[1].Data.Type != xdr.ScValTypeScvU32 {
-		t.Errorf("event 1 carries a %s payload, want u32", events[1].Data.Type)
+	if data, ok := events[1].Data.(xdr.ScVal); !ok || data.Type != xdr.ScValTypeScvU32 {
+		t.Errorf("event 1 carries a %v payload, want u32", events[1].Data)
 	}
 }
 
@@ -247,7 +247,7 @@ func TestDiagnosticEventsRecordsFailedCalls(t *testing.T) {
 
 	meta := diagnosticMeta(t, pinChanges(t, testDiagnosticLedger),
 		fnCall("transfer", false),
-		contractEventInDiag("transfer", 7, false),
+		contractEventInDiag(false),
 		fnReturn("transfer", diagVoid(), false),
 	)
 
@@ -374,7 +374,7 @@ func TestAssertDiagnosticEventOrderMessages(t *testing.T) {
 
 	meta := diagnosticMeta(t, pinChanges(t, testDiagnosticLedger),
 		fnCall("transfer", true),
-		contractEventInDiag("transfer", 7, true),
+		contractEventInDiag(true),
 		fnReturn("transfer", diagU32(7), true),
 	)
 	empty := diagnosticMeta(t, pinChanges(t, testDiagnosticLedger))
@@ -668,7 +668,7 @@ func TestDiagnosticEventKindNames(t *testing.T) {
 		{"fn_return", fnReturn("transfer", diagVoid(), true), focus.DiagnosticFnReturn},
 		{"log", logEvent("hello", true), "log"},
 		{"system event", systemEvent(true), focus.DiagnosticSystem},
-		{"contract event", contractEventInDiag("transfer", 7, true), focus.DiagnosticContract},
+		{"contract event", contractEventInDiag(true), focus.DiagnosticContract},
 		{"an unnamed diagnostic event", diagnosticEvent(
 			diagContractEvent(xdr.ContractEventTypeDiagnostic, nil, diagVoid(), diagU32(1)), true),
 			focus.DiagnosticOther},

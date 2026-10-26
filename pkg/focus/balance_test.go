@@ -107,8 +107,8 @@ func TestAssertBalanceChangedNative(t *testing.T) {
 func TestAssertBalanceChangedCredit(t *testing.T) {
 	t.Parallel()
 
-	before := trustlineEntryValue(t, testDest, "USDC", 100, 1000)
-	after := trustlineEntryValue(t, testDest, "USDC", 150, 1000)
+	before := trustlineEntryValue(t, 100, 1000)
+	after := trustlineEntryValue(t, 150, 1000)
 	meta := metaV2(t, []xdr.LedgerEntryChange{stateChange(before), updatedChange(after)})
 
 	_, decodedAsset, err := focus.Encode(mustCreditAsset(t, "USDC"), "Asset")
@@ -122,7 +122,7 @@ func TestAssertBalanceChangedCredit(t *testing.T) {
 	}{
 		{"canonical string", usdcAsset},
 		{"xdr asset", mustCreditAsset(t, "USDC")},
-		{"xdr trustline asset", trustLineAsset(t, "USDC")},
+		{"xdr trustline asset", trustLineAsset(t)},
 		{"decoded lens value", decodedAsset},
 	}
 
@@ -140,7 +140,7 @@ func TestAssertBalanceChangedCredit(t *testing.T) {
 	t.Run("created trustline counts in full", func(t *testing.T) {
 		t.Parallel()
 
-		created := trustlineEntryValue(t, testDest, "USDC", 5_0000000, 1000)
+		created := trustlineEntryValue(t, 5_0000000, 1000)
 		tb := faketb.New()
 		if !focus.AssertBalanceChanged(tb, metaV2(t, []xdr.LedgerEntryChange{createdChange(created)}),
 			testDest, usdcAsset, 5_0000000) {
@@ -225,8 +225,8 @@ func TestAssertBalanceChangedFailureMessage(t *testing.T) {
 	t.Run("wrong asset shows the account's real changes", func(t *testing.T) {
 		t.Parallel()
 
-		trustlineBefore := trustlineEntryValue(t, testDest, "USDC", 100, 1000)
-		trustlineAfter := trustlineEntryValue(t, testDest, "USDC", 150, 1000)
+		trustlineBefore := trustlineEntryValue(t, 100, 1000)
+		trustlineAfter := trustlineEntryValue(t, 150, 1000)
 		meta := metaV2(t, []xdr.LedgerEntryChange{
 			stateChange(trustlineBefore),
 			updatedChange(trustlineAfter),

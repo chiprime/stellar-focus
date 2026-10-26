@@ -2,6 +2,7 @@ package golden
 
 import (
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -29,7 +30,11 @@ func BenchmarkFixture(b *testing.B, want, got focus.Value, typeName string, opts
 
 // BenchmarkGolden measures the structural comparison used by Golden.Assert.
 func BenchmarkGolden(b *testing.B) {
-	data, err := os.ReadFile("../../testdata/tx_failed.env.txt")
+	path := filepath.Join("..", "fuzz", "testdata", "tx_failed.env.txt")
+	if _, err := os.Stat(path); err != nil {
+		path = "../../testdata/tx_failed.env.txt"
+	}
+	data, err := os.ReadFile(path)
 	if err != nil {
 		b.Fatal(err)
 	}

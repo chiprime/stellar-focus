@@ -331,7 +331,7 @@ func TestAssertLiquidityPoolFailureMessages(t *testing.T) {
 			{"not hex", "zzzz", "is not hex"},
 			{"wrong length", "abcd", "a liquidity pool id is 32 bytes"},
 			{"a nil pointer", (*xdr.PoolId)(nil), "nil *xdr.PoolId"},
-			{"a credit trustline asset", trustLineAsset(t, "USDC"), "not a pool share"},
+			{"a credit trustline asset", trustLineAsset(t), "not a pool share"},
 			{"another entry's key", ledgerKeyOf(t, accountEntryValue(t, testSource, 1,
 				xdr.Thresholds{1, 1, 1, 1})), "not a liquidity pool"},
 			{"an unsupported type", 42, "pass the pool id as hex"},

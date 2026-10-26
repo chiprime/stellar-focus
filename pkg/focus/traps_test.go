@@ -31,10 +31,10 @@ func vmErrorVal(code xdr.ScErrorCode) xdr.ScVal {
 
 // errorEvent is the host saying the call died: an "error" diagnostic topic and
 // an ScError payload. Nothing else in the stream records a trap's reason.
-func errorEvent(data xdr.ScVal, inSuccessfulCall bool) xdr.DiagnosticEvent {
+func errorEvent(data xdr.ScVal) xdr.DiagnosticEvent {
 	id := testContractID
 	return diagnosticEvent(diagContractEvent(xdr.ContractEventTypeDiagnostic, &id, data,
-		diagSymbol("error")), inSuccessfulCall)
+		diagSymbol("error")), false)
 }
 
 // trappedStream is a failed call's diagnostic stream: the frame it opened, a
@@ -43,7 +43,7 @@ func trappedStream() []xdr.DiagnosticEvent {
 	return []xdr.DiagnosticEvent{
 		fnCall("transfer", false),
 		logEvent("transferring 10", false),
-		errorEvent(hostErrorVal(4), false),
+		errorEvent(hostErrorVal(4)),
 	}
 }
 
@@ -89,7 +89,7 @@ func TestAssertContractTrappedWithPasses(t *testing.T) {
 	response := trappedResponse(t, trappedStream()...)
 	vmResponse := trappedResponse(t,
 		fnCall("transfer", false),
-		errorEvent(vmErrorVal(xdr.ScErrorCodeScecInvalidAction), false))
+		errorEvent(vmErrorVal(xdr.ScErrorCodeScecInvalidAction)))
 
 	tests := []struct {
 		name string
@@ -360,12 +360,12 @@ func TestDescribeScErrorRendering(t *testing.T) {
 	}{
 		{
 			name:  "contract code",
-			event: errorEvent(hostErrorVal(4), false),
+			event: errorEvent(hostErrorVal(4)),
 			want:  "Error(Contract, #4)",
 		},
 		{
 			name:  "host code",
-			event: errorEvent(vmErrorVal(xdr.ScErrorCodeScecInvalidAction), false),
+			event: errorEvent(vmErrorVal(xdr.ScErrorCodeScecInvalidAction)),
 			want:  "Error(WasmVm, InvalidAction)",
 		},
 	}

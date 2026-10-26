@@ -104,8 +104,8 @@ func TestAssertEntryCreatedEmptyMeta(t *testing.T) {
 func TestAssertEntryModified(t *testing.T) {
 	t.Parallel()
 
-	before := trustlineEntryValue(t, testDest, "USDC", 100, 1000)
-	after := trustlineEntryValue(t, testDest, "USDC", 500, 1000)
+	before := trustlineEntryValue(t, 100, 1000)
+	after := trustlineEntryValue(t, 500, 1000)
 	key := ledgerKeyOf(t, after)
 
 	t.Run("passes for an update", func(t *testing.T) {
@@ -145,7 +145,7 @@ func TestAssertEntryModified(t *testing.T) {
 func TestAssertEntryDeleted(t *testing.T) {
 	t.Parallel()
 
-	trustline := trustlineEntryValue(t, testDest, "USDC", 100, 1000)
+	trustline := trustlineEntryValue(t, 100, 1000)
 	key := ledgerKeyOf(t, trustline)
 
 	t.Run("passes for a removal", func(t *testing.T) {

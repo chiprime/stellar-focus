@@ -68,6 +68,10 @@ type TB interface {
 // The looseness is deliberate. Test code holds XDR in whichever form the
 // system under test produced, and requiring callers to convert at every call
 // site is friction in exactly the common case.
+//
+// One assertion accepts a form that is not XDR at all: an event matcher
+// takes a map of field names for its payload, which the contract's
+// specification turns into a comparison by field name. See Event.
 type Value = any
 
 // coerce turns an accepted Value into a decoded lens value.

@@ -340,12 +340,12 @@ func TestAssertBalanceForfeited(t *testing.T) {
 	t.Parallel()
 
 	partial := metaV2(t, []xdr.LedgerEntryChange{
-		stateChange(trustlineEntryValue(t, testDest, "USDC", 100_0000000, 500_0000000)),
-		updatedChange(trustlineEntryValue(t, testDest, "USDC", 40_0000000, 500_0000000)),
+		stateChange(trustlineEntryValue(t, 100_0000000, 500_0000000)),
+		updatedChange(trustlineEntryValue(t, 40_0000000, 500_0000000)),
 	})
 	full := metaV2(t, []xdr.LedgerEntryChange{
-		stateChange(trustlineEntryValue(t, testDest, "USDC", 100_0000000, 500_0000000)),
-		removedChange(ledgerKeyOf(t, trustlineEntryValue(t, testDest, "USDC", 100_0000000, 500_0000000))),
+		stateChange(trustlineEntryValue(t, 100_0000000, 500_0000000)),
+		removedChange(ledgerKeyOf(t, trustlineEntryValue(t, 100_0000000, 500_0000000))),
 	})
 
 	t.Run("partial forfeiture", func(t *testing.T) {

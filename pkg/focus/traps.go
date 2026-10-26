@@ -102,7 +102,7 @@ func AssertContractTrappedWith(t TB, result Value, expectedDiagnosticSubstring s
 
 	t.Errorf("%s: the invocation trapped, but no host diagnostic contains %q\n\n%s",
 		assertion, expectedDiagnosticSubstring,
-		indent(describeDiagnosticMiss(events, expectedDiagnosticSubstring), "  "))
+		indent(describeDiagnosticMiss(events, expectedDiagnosticSubstring)))
 	return false
 }
 
@@ -122,7 +122,7 @@ func contractTrapped(t TB, assertion string, result Value) bool {
 		}
 	}
 
-	t.Errorf("%s: no operation trapped\n%s", assertion, indent(explainOutcome(s), "  "))
+	t.Errorf("%s: no operation trapped\n%s", assertion, indent(explainOutcome(s)))
 	return false
 }
 

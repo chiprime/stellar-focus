@@ -185,7 +185,7 @@ func AssertOfferCreated(t TB, meta Value, want Offer) bool {
 		t.Errorf("%s: the transaction created no offer; want %s\n"+
 			"An offer that was filled completely on submission never reaches the "+
 			"ledger — assert the trade with AssertTradeExecuted instead.\n\n%s",
-			assertion, query.describe(), indent(describeOfferChanges(changes), "  "))
+			assertion, query.describe(), indent(describeOfferChanges(changes)))
 		return false
 	}
 	for _, o := range created {
@@ -201,7 +201,7 @@ func AssertOfferCreated(t TB, meta Value, want Offer) bool {
 		return false
 	}
 	t.Errorf("%s: none of the %d offers this transaction created is %s\n\n%s",
-		assertion, len(created), query.describe(), indent(describeOffers(created), "  "))
+		assertion, len(created), query.describe(), indent(describeOffers(created)))
 	return false
 }
 
@@ -255,7 +255,7 @@ func AssertTradeExecuted(t TB, value Value, want Trade) bool {
 	}
 
 	t.Errorf("%s: no trade in this %s is %s\n\n%s",
-		assertion, source, query.describe(), indent(describeTrades(trades), "  "))
+		assertion, source, query.describe(), indent(describeTrades(trades)))
 	return false
 }
 
@@ -845,7 +845,7 @@ func offerMismatchMessage(assertion string, q offerQuery, got offerState) string
 		fmt.Fprintf(&b, "  %s\n", d)
 	}
 	b.WriteString("\n")
-	b.WriteString(indent(describeOffers([]offerState{got}), "  "))
+	b.WriteString(indent(describeOffers([]offerState{got})))
 	return b.String()
 }
 

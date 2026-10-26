@@ -32,6 +32,17 @@ var DefaultEndpoints = map[string]string{
 	NetworkMainnet: "https://mainnet.sorobanrpc.com",
 }
 
+// DefaultHorizonEndpoints maps a network name to its public Horizon
+// endpoint.
+//
+// Horizon is a separate service from Soroban RPC, so it has its own
+// defaults: a capture that asks for Horizon and gets an RPC URL would fail
+// in a way that took a while to understand.
+var DefaultHorizonEndpoints = map[string]string{
+	NetworkTestnet: "https://horizon-testnet.stellar.org",
+	NetworkMainnet: "https://horizon.stellar.org",
+}
+
 // ErrNotFound is returned when the requested item is not on the network, or
 // has aged out of the endpoint's retention window.
 var ErrNotFound = errors.New("not found on this network")
@@ -51,6 +62,9 @@ type Record struct {
 	Description string
 	// Anonymized marks XDR whose public account addresses were replaced.
 	Anonymized bool
+	// Sanitized marks XDR whose memos, data values or secret keys were
+	// masked by a Sanitizer.
+	Sanitized bool
 }
 
 // Source fetches data from a network.
@@ -79,6 +93,69 @@ type NetworkPassphraseSource interface {
 	NetworkPassphrase(ctx context.Context) (string, error)
 }
 
+// resolvePassphrase works out which network passphrase a source is bound to.
+//
+// A source that reports its passphrase is believed first, since that is what
+// the network itself says. Otherwise the passphrase of a known network name
+// is used, and for an unknown network with a silent source the result is
+// empty.
+func resolvePassphrase(ctx context.Context, src Source) (string, error) {
+	if source, ok := src.(NetworkPassphraseSource); ok {
+		passphrase, err := source.NetworkPassphrase(ctx)
+		if err != nil {
+			return "", fmt.Errorf("detecting network passphrase: %w", err)
+		}
+		if passphrase != "" {
+			return passphrase, nil
+		}
+	}
+	return golden.PassphraseFor(src.Network()), nil
+}
+
+// WithPassphrase binds a source to an explicit network passphrase.
+//
+// It is for networks the library cannot name — a standalone core, a private
+// network — and for sources such as Horizon that do not report a passphrase
+// of their own. When the wrapped source does report one, the two must agree:
+// a fixture stamped with the wrong passphrase would carry a hash that no
+// longer identifies its transaction.
+func WithPassphrase(src Source, passphrase string) Source {
+	if passphrase == "" {
+		return src
+	}
+	return &passphraseSource{Source: src, passphrase: passphrase}
+}
+
+// passphraseSource is a Source with an explicitly supplied passphrase.
+type passphraseSource struct {
+	Source
+	passphrase string
+}
+
+// NetworkPassphrase implements NetworkPassphraseSource, checking the
+// explicit passphrase against the one the wrapped source reports, if any.
+func (s *passphraseSource) NetworkPassphrase(ctx context.Context) (string, error) {
+	inner, ok := s.Source.(NetworkPassphraseSource)
+	if !ok {
+		return s.passphrase, nil
+	}
+	reported, err := inner.NetworkPassphrase(ctx)
+	if err != nil {
+		return "", err
+	}
+	if reported != "" && reported != s.passphrase {
+		return "", fmt.Errorf("network passphrase mismatch: %q was given, but %s reports %q",
+			s.passphrase, s.Name(), reported)
+	}
+	return s.passphrase, nil
+}
+
+// TransactionInLedger implements LedgerTransactionSource, so wrapping a
+// source that can use a ledger hint — an archive fallback — keeps the hint.
+func (s *passphraseSource) TransactionInLedger(ctx context.Context, hash string, ledger uint32) ([]Record, error) {
+	return FetchTransaction(ctx, s.Source, hash, ledger)
+}
+
 // Capture fetches items and turns them into fixtures, stamping each with the
 // provenance needed to verify or refresh it later.
 //
@@ -88,18 +165,17 @@ func Capture(ctx context.Context, src Source, records []Record, now time.Time) (
 	out := make([]*golden.Fixture, 0, len(records))
 	passphrase := ""
 	if len(records) > 0 {
-		if source, ok := src.(NetworkPassphraseSource); ok {
-			var err error
-			passphrase, err = source.NetworkPassphrase(ctx)
-			if err != nil {
-				return nil, fmt.Errorf("detecting network passphrase: %w", err)
-			}
+		var err error
+		passphrase, err = resolvePassphrase(ctx, src)
+		if err != nil {
+			return nil, err
 		}
 	}
 	for _, r := range records {
 		provenance := golden.NewProvenance(src.Network(), src.Endpoint(), r.Ledger, r.TxHash, now)
 		provenance.NetworkPassphrase = passphrase
 		provenance.Anonymized = r.Anonymized
+		provenance.Sanitized = r.Sanitized
 
 		fixture, err := golden.Build(r.XDR, r.Type, r.Description, provenance)
 		if err != nil {
@@ -137,20 +213,25 @@ func Verify(ctx context.Context, src Source, path string, f *golden.Fixture) Ver
 		return result
 	}
 
+	if f.Captured != nil && f.Captured.Sanitized {
+		result.Err = fmt.Errorf("fixture data was sanitized, so it cannot be verified against the live network")
+		return result
+	}
+
 	if f.Captured == nil || f.Captured.TxHash == "" {
 		result.Err = fmt.Errorf(
 			"no capture provenance, so there is nothing to re-fetch (was this fixture written by hand?)")
 		return result
 	}
 	if f.Captured.NetworkPassphrase != "" {
-		passphraseSource, ok := src.(NetworkPassphraseSource)
-		if !ok {
-			result.Err = fmt.Errorf("capture source cannot verify the fixture network passphrase")
+		passphrase, err := resolvePassphrase(ctx, src)
+		if err != nil {
+			result.Err = err
 			return result
 		}
-		passphrase, err := passphraseSource.NetworkPassphrase(ctx)
-		if err != nil {
-			result.Err = fmt.Errorf("detecting network passphrase: %w", err)
+		if passphrase == "" {
+			result.Err = fmt.Errorf("capture source cannot verify the fixture network passphrase " +
+				"(give the passphrase explicitly with --passphrase)")
 			return result
 		}
 		if passphrase != f.Captured.NetworkPassphrase {
@@ -160,7 +241,7 @@ func Verify(ctx context.Context, src Source, path string, f *golden.Fixture) Ver
 		}
 	}
 
-	records, err := src.Transaction(ctx, f.Captured.TxHash)
+	records, err := FetchTransaction(ctx, src, f.Captured.TxHash, f.Captured.Ledger)
 	if err != nil {
 		result.Err = fmt.Errorf("re-fetching %s: %w", f.Captured.TxHash, err)
 		return result
@@ -197,6 +278,20 @@ func ResolveEndpoint(network, override string) (string, error) {
 		return override, nil
 	}
 	url, ok := DefaultEndpoints[network]
+	if !ok {
+		return "", fmt.Errorf(
+			"unknown network %q; use testnet or mainnet, or give an explicit --rpc-url", network)
+	}
+	return url, nil
+}
+
+// ResolveHorizonEndpoint picks the Horizon URL for a network, honouring an
+// explicit override.
+func ResolveHorizonEndpoint(network, override string) (string, error) {
+	if override != "" {
+		return override, nil
+	}
+	url, ok := DefaultHorizonEndpoints[network]
 	if !ok {
 		return "", fmt.Errorf(
 			"unknown network %q; use testnet or mainnet, or give an explicit --rpc-url", network)

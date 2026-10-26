@@ -57,7 +57,7 @@ func AssertBalanceChanged(t TB, meta Value, account Value, asset Value, delta in
 		assertion, describeBalanceSubject(addr, spec),
 		amountStroops(xdr.Int64(got), spec.unit()),
 		amountStroops(xdr.Int64(delta), spec.unit()),
-		indent(describeAccountChanges(changes, addr), "  "))
+		indent(describeAccountChanges(changes, addr)))
 	return false
 }
 

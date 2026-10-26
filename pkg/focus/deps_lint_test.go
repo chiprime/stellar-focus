@@ -50,6 +50,7 @@ var astLibraryDirs = []string{
 	".",
 	"./require",
 	"../golden",
+	"../golden/require",
 }
 
 // TestLibraryImportsStayLightAST verifies statically that the assertion

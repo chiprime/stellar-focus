@@ -48,6 +48,7 @@ const (
 	keyConfig      = "config"
 	keyNetwork     = "network"
 	keyRPCURL      = "rpc-url"
+	keySource      = "source"
 	keyTimeout     = "timeout"
 	keyColor       = "color"
 	keyOut         = "out"
@@ -60,18 +61,44 @@ const (
 	keyOutFile     = "out-file"
 	keyType        = "type"
 	keyDescription = "description"
+	keyPass        = "passphrase"
+	keyFileSrc     = "file-source"
+	keySanit       = "sanitize"
+	keyMemo        = "mask-memo"
+	keyData        = "scrub-data"
+	keyKeys        = "scrub-keys"
+	keyArchive     = "archive-url"
+	keySince       = "since"
+	keyFilter      = "filter"
+	keyDriftedOnly = "drifted-only"
+	keyVerifyCache = "verify-cache"
+)
+
+// The capture sources the command can talk to.
+const (
+	// sourceRPC captures from a Soroban RPC endpoint.
+	sourceRPC = "rpc"
+	// sourceHorizon captures from a Horizon REST endpoint.
+	sourceHorizon = "horizon"
+	// sourceFile replays XDR dumps from a local directory. It is chosen by
+	// --file-source rather than --source, since it needs a directory.
+	sourceFile = "file"
 )
 
 // Defaults, declared once so a flag and a config fallback cannot drift apart.
 const (
 	defaultNetwork     = capture.NetworkTestnet
 	defaultRPCURL      = ""
+	defaultSource      = sourceRPC
 	defaultTimeout     = 30 * time.Second
 	defaultColor       = "auto"
 	defaultOutDir      = "testdata"
 	defaultPrefix      = ""
 	defaultForce       = false
 	defaultMask        = false
+	defaultPass        = ""
+	defaultFileSrc     = ""
+	defaultArchive     = ""
 	defaultBatch       = ""
 	defaultConcurrency = 4
 	defaultRate        = 0
@@ -107,6 +134,7 @@ func newConfig() *config {
 
 	v.SetDefault(keyNetwork, defaultNetwork)
 	v.SetDefault(keyRPCURL, defaultRPCURL)
+	v.SetDefault(keySource, defaultSource)
 	v.SetDefault(keyTimeout, defaultTimeout)
 	v.SetDefault(keyColor, defaultColor)
 	v.SetDefault(keyOut, defaultOutDir)
@@ -114,6 +142,9 @@ func newConfig() *config {
 	v.SetDefault(keyForce, defaultForce)
 	v.SetDefault(keyConcurrency, defaultConcurrency)
 	v.SetDefault(keyRate, defaultRate)
+	v.SetDefault(keyPass, defaultPass)
+	v.SetDefault(keyFileSrc, defaultFileSrc)
+	v.SetDefault(keyArchive, defaultArchive)
 
 	return &config{v: v}
 }
@@ -128,17 +159,29 @@ func (c *config) bindRootFlags(root *cobra.Command) {
 	flags.String(keyNetwork, defaultNetwork,
 		"network to talk to: testnet or mainnet")
 	flags.String(keyRPCURL, defaultRPCURL,
-		"RPC endpoint, overriding the network default")
+		"endpoint override, for the source in use")
+	flags.String(keySource, defaultSource,
+		"where to capture from: rpc or horizon")
+	flags.String(keyFileSrc, defaultFileSrc,
+		"read XDR dumps from this directory instead of the network")
+	flags.String(keyArchive, defaultArchive,
+		"history archive to fall back to for transactions older than the source keeps")
 	flags.Duration(keyTimeout, defaultTimeout,
 		"timeout for a single RPC call")
 	flags.String(keyColor, defaultColor,
 		`when to colourise output: "auto", "always" or "never"`)
+	flags.String(keyPass, defaultPass,
+		"network passphrase, for a network focus cannot name or a source that does not report one")
 
 	c.bind(flags, configFlag)
 	c.bind(flags, keyNetwork)
 	c.bind(flags, keyRPCURL)
+	c.bind(flags, keySource)
+	c.bind(flags, keyFileSrc)
+	c.bind(flags, keyArchive)
 	c.bind(flags, keyTimeout)
 	c.bind(flags, keyColor)
+	c.bind(flags, keyPass)
 }
 
 // bindCaptureFlags declares the flags shared by both capture subcommands.
@@ -155,11 +198,43 @@ func (c *config) bindCaptureFlags(cmd *cobra.Command) {
 		"overwrite fixture files that already exist")
 	flags.Bool(keyMask, defaultMask,
 		"replace public account addresses with deterministic mock accounts")
+	flags.Bool(keySanit, false,
+		"mask sensitive data: the same as --mask-memo --scrub-data --scrub-keys")
+	flags.Bool(keyMemo, false,
+		"replace text memos with "+capture.RedactedMemo)
+	flags.Bool(keyData, false,
+		"replace data entry values with "+capture.RedactedData)
+	flags.Bool(keyKeys, false,
+		"replace anything shaped like a secret key (S...) with "+capture.RedactedSecretKey)
 
 	c.bind(flags, keyOut)
 	c.bind(flags, keyPrefix)
 	c.bind(flags, keyForce)
 	c.bind(flags, keyMask)
+	c.bind(flags, keySanit)
+	c.bind(flags, keyMemo)
+	c.bind(flags, keyData)
+	c.bind(flags, keyKeys)
+}
+
+// bindVerifyFlags declares the flags that narrow what a verify run checks.
+//
+// They are the reason a repository with hundreds of fixtures can still be
+// verified on every commit: most of them are old, and the ones that matter
+// are the ones that drifted.
+func (c *config) bindVerifyFlags(cmd *cobra.Command) {
+	flags := cmd.Flags()
+
+	flags.String(keySince, "",
+		"only check fixtures captured after this duration (48h) or timestamp (2026-10-01T00:00:00Z)")
+	flags.String(keyFilter, "",
+		"only check fixtures whose filename matches this glob, or whose metadata matches key:value")
+	flags.Bool(keyDriftedOnly, false,
+		"only re-check fixtures that previously drifted or could not be checked")
+
+	c.bind(flags, keySince)
+	c.bind(flags, keyFilter)
+	c.bind(flags, keyDriftedOnly)
 }
 
 // bindBatchFlags declares the flags a batch capture accepts.
@@ -275,7 +350,24 @@ func (c *config) validate() error {
 	if c.network() == "" {
 		return usageErrorf("network must not be empty")
 	}
-	if _, err := capture.ResolveEndpoint(c.network(), c.rpcURL()); err != nil {
+	switch c.source() {
+	case sourceRPC, sourceHorizon:
+	case sourceFile:
+		dir := c.fileSource()
+		if dir == "" {
+			return usageErrorf("the file source needs a directory; give it with --file-source <dir>")
+		}
+		info, err := os.Stat(dir)
+		if err != nil {
+			return usageErrorf("file source: %v", err)
+		}
+		if !info.IsDir() {
+			return usageErrorf("file source %s is not a directory", dir)
+		}
+	default:
+		return usageErrorf(`source must be %q or %q, got %q`, sourceRPC, sourceHorizon, c.source())
+	}
+	if _, err := c.endpoint(); err != nil {
 		return usageErrorf("%v", err)
 	}
 	if c.timeout() <= 0 {
@@ -303,6 +395,38 @@ func (c *config) network() string {
 	return strings.TrimSpace(c.v.GetString(keyNetwork))
 }
 
+// source is the capture source: rpc or horizon, or file when --file-source
+// names a directory of dumps.
+func (c *config) source() string {
+	if c.fileSource() != "" {
+		return sourceFile
+	}
+	return strings.TrimSpace(c.v.GetString(keySource))
+}
+
+// fileSource is the directory of XDR dumps to read instead of the network.
+func (c *config) fileSource() string {
+	return strings.TrimSpace(c.v.GetString(keyFileSrc))
+}
+
+// endpoint is the address the capture source talks to.
+//
+// The default depends on the source: a Soroban RPC endpoint and a Horizon
+// endpoint are different services, and pointing one at the other fails in a
+// way that is not obvious from the error.
+func (c *config) endpoint() (string, error) {
+	switch c.source() {
+	case sourceHorizon:
+		return capture.ResolveHorizonEndpoint(c.network(), c.rpcURL())
+	case sourceRPC:
+		return capture.ResolveEndpoint(c.network(), c.rpcURL())
+	case sourceFile:
+		return c.fileSource(), nil
+	default:
+		return "", fmt.Errorf("unknown source %q", c.source())
+	}
+}
+
 // rpcURL is the endpoint override. The snake_case spelling is accepted so a
 // config file written in Go-ish YAML does not silently lose the setting.
 func (c *config) rpcURL() string {
@@ -310,6 +434,17 @@ func (c *config) rpcURL() string {
 		return url
 	}
 	return strings.TrimSpace(c.v.GetString("rpc_url"))
+}
+
+// passphrase is the explicit network passphrase, empty when the source or
+// the network name is to decide it.
+func (c *config) passphrase() string {
+	return strings.TrimSpace(c.v.GetString(keyPass))
+}
+
+// archiveURL is the history archive to fall back to, empty for none.
+func (c *config) archiveURL() string {
+	return strings.TrimSpace(c.v.GetString(keyArchive))
 }
 
 // timeout bounds a single RPC call.
@@ -335,6 +470,39 @@ func (c *config) prefix() string {
 // force permits capture to overwrite existing fixtures.
 func (c *config) force() bool {
 	return c.v.GetBool(keyForce)
+}
+
+// since is the threshold a fixture's capture time must be newer than.
+//
+// It is either a duration counted back from now, or an RFC3339 timestamp.
+// An empty string means no threshold.
+func (c *config) since() string {
+	return strings.TrimSpace(c.v.GetString(keySince))
+}
+
+// filter narrows a verify run to the fixtures it should check.
+//
+// It is either a glob over the filename, or a metadata selector of the form
+// "key:value".
+func (c *config) filter() string {
+	return strings.TrimSpace(c.v.GetString(keyFilter))
+}
+
+// driftedOnly reports whether a verify run should re-check only the fixtures
+// that previously drifted or could not be checked.
+func (c *config) driftedOnly() bool {
+	return c.v.GetBool(keyDriftedOnly)
+}
+
+// verifyCachePath is where the verify command keeps what its last run found.
+//
+// It sits beside the capture cache, under .focus, so one directory name
+// covers every local artifact the tool writes.
+func (c *config) verifyCachePath() string {
+	if path := strings.TrimSpace(c.v.GetString(keyVerifyCache)); path != "" {
+		return path
+	}
+	return defaultVerifyCachePath
 }
 
 // maskAddresses replaces real account addresses in captured fixtures with
@@ -374,4 +542,15 @@ func (c *config) encodeType() string {
 // encodeDescription is the note recorded in the fixture being written.
 func (c *config) encodeDescription() string {
 	return c.v.GetString(keyDescription)
+}
+
+// sanitizer is the masking capture applies before writing fixtures.
+// --sanitize turns every mask on; the individual flags pick some of them.
+func (c *config) sanitizer() capture.Sanitizer {
+	all := c.v.GetBool(keySanit)
+	return capture.Sanitizer{
+		MaskMemo:  all || c.v.GetBool(keyMemo),
+		ScrubData: all || c.v.GetBool(keyData),
+		ScrubKeys: all || c.v.GetBool(keyKeys),
+	}
 }

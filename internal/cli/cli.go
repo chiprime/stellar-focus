@@ -12,6 +12,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -32,8 +33,35 @@ var Version = "dev"
 
 // newSource builds the capture source. It is a variable so tests can
 // substitute a fake and exercise the commands without a network.
-var newSource = func(network, endpoint string, timeout time.Duration) capture.Source {
-	return capture.NewRPCSource(network, endpoint, timeout)
+//
+// The kind is the source the user asked for — "rpc", "horizon" or "file" —
+// and the endpoint is the URL, or for a file source the directory, that kind
+// resolves to.
+var newSource = func(kind, network, endpoint string, timeout time.Duration) capture.Source {
+	switch kind {
+	case sourceFile:
+		return capture.NewFileSource(endpoint).ForNetwork(network)
+	case sourceHorizon:
+		return capture.NewHorizonSource(network, endpoint, timeout)
+	default:
+		return capture.NewRPCSource(network, endpoint, timeout)
+	}
+}
+
+// openSource builds the configured capture source: falling back to a
+// history archive when --archive-url names one, and bound to an explicit
+// network passphrase when one was given.
+func openSource(cfg *config) (capture.Source, error) {
+	endpoint, err := cfg.endpoint()
+	if err != nil {
+		return nil, usageErrorf("%v", err)
+	}
+	src := newSource(cfg.source(), cfg.network(), endpoint, cfg.timeout())
+	if url := cfg.archiveURL(); url != "" {
+		archive := capture.NewArchivalSource(cfg.network(), url, cfg.timeout())
+		src = capture.NewFallbackSource(src, archive)
+	}
+	return capture.WithPassphrase(src, cfg.passphrase()), nil
 }
 
 // now is injectable so captures in tests carry a fixed timestamp.
@@ -44,8 +72,14 @@ var now = time.Now
 var stdin io.Reader = os.Stdin
 
 // Execute builds and runs the root command.
-func Execute(args []string, stdout, stderr io.Writer) error {
+//
+// extra commands are added to the root before execution: cmd/focus passes
+// `focus assert` (cmd/focus/interactive.go), which keeps the interactive
+// assertion generator beside main without moving fixtures — capture and
+// verify — out of this package.
+func Execute(args []string, stdout, stderr io.Writer, extra ...*cobra.Command) error {
 	root := newRootCmd(stdout, stderr)
+	root.AddCommand(extra...)
 	root.SetArgs(args)
 	return root.Execute()
 }
@@ -72,6 +106,9 @@ precedence.`,
   # Check that stored fixtures still match the chain
   focus verify testdata/
 
+  # Check them offline, against XDR dumps instead of the network
+  focus verify testdata/ --file-source testdata/dumps/
+
   # Use mainnet for one invocation
   FOCUS_NETWORK=mainnet focus verify testdata/`,
 		SilenceUsage:  true,
@@ -91,12 +128,12 @@ precedence.`,
 
 	root.AddCommand(
 		newCaptureCmd(cfg, stdout, stderr),
-		newEncodeCmd(cfg, stdout, stderr),
+		newEncodeCmd(cfg, stdout),
 		newLedgerKeyCmd(stdout),
 		newVerifyCmd(cfg, stdout, stderr),
-		newRefreshCmd(cfg, stdout, stderr),
+		newRefreshCmd(stdout, stderr),
 		newVersionCmd(stdout),
-		newLintCmd(cfg, stdout, stderr),
+		newLintCmd(stdout, stderr),
 	)
 	return root
 }
@@ -119,7 +156,7 @@ func newVersionCmd(stdout io.Writer) *cobra.Command {
 // It exists because the alternative is a shell script around a Go program:
 // a payload that is already in hand — in a debug log, a test case, an RPC
 // response — should not need a network to become a reviewable fixture.
-func newEncodeCmd(cfg *config, stdout, stderr io.Writer) *cobra.Command {
+func newEncodeCmd(cfg *config, stdout io.Writer) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "encode [xdr]",
 		Short: "Turn a raw XDR payload into a golden fixture",
@@ -282,6 +319,8 @@ func newCaptureCmd(cfg *config, stdout, stderr io.Writer) *cobra.Command {
 		Short: "Record real chain data as fixture files",
 	}
 
+	var ledger uint32
+
 	txCmd := &cobra.Command{
 		Use:   "tx <hash>",
 		Short: "Record a transaction's envelope, result and meta",
@@ -294,10 +333,27 @@ transactions are captured a few at a time. A transaction that cannot be
 captured is reported and the batch carries on.
 
 A batch names each fixture after the transaction it came from, so two
-transactions in one batch do not overwrite each other.`,
+transactions in one batch do not overwrite each other.
+
+A capture from a private or staging network may carry data that must not be
+committed. --sanitize masks text memos, data entry values and anything shaped
+like a secret key; --mask-memo, --scrub-data and --scrub-keys pick one each.
+A sanitized fixture no longer matches the chain, so verify skips it.
+
+RPC keeps only recent history. With --archive-url, a transaction RPC no
+longer has is read from a Stellar history archive instead; an archive is
+not indexed by hash, so give the ledger it closed in with --ledger. An
+archive holds envelopes and results but not transaction meta.`,
 		Example: `  focus capture tx 2b2e276a… --out testdata/
   focus capture tx 2b2e276a… --out testdata/ --prefix failed_payment
-  focus capture tx --batch hashes.txt --out testdata/ --concurrency 4`,
+  focus capture tx 2b2e276a… --out testdata/ --sanitize
+  focus capture tx --batch hashes.txt --out testdata/ --concurrency 4
+  focus capture tx 2b2e276a… --network standalone --rpc-url http://localhost:8000/rpc \
+    --passphrase "Standalone Network ; February 2017"
+
+  # A transaction older than RPC keeps, from the history archive
+  focus capture tx 2b2e276a… --network mainnet --ledger 3966820 \
+    --archive-url https://history.stellar.org/prd/core-live/core_live_001`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if cfg.batch() != "" {
@@ -310,18 +366,20 @@ transactions in one batch do not overwrite each other.`,
 				return usageErrorf("give a transaction hash, or --batch to read the hashes from a file")
 			}
 
-			endpoint, err := capture.ResolveEndpoint(cfg.network(), cfg.rpcURL())
+			src, err := openSource(cfg)
 			if err != nil {
-				return usageErrorf("%v", err)
+				return err
 			}
-			src := newSource(cfg.network(), endpoint, cfg.timeout())
 
-			records, err := src.Transaction(cmd.Context(), args[0])
+			records, err := capture.FetchTransaction(cmd.Context(), src, args[0], ledger)
+			if errors.Is(err, capture.ErrLedgerRequired) {
+				return usageErrorf("%v\n(give the ledger the transaction closed in with --ledger)", err)
+			}
 			if err != nil {
 				return err
 			}
 			return writeFixtures(cmd.Context(), src, records,
-				cfg.outDir(), cfg.prefix(), cfg.force(), cfg.maskAddresses(), stdout)
+				cfg.outDir(), cfg.prefix(), cfg.force(), cfg.maskAddresses(), cfg.sanitizer(), stdout)
 		},
 	}
 
@@ -330,20 +388,22 @@ transactions in one batch do not overwrite each other.`,
 		Short: "Record a ledger entry",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			endpoint, err := capture.ResolveEndpoint(cfg.network(), cfg.rpcURL())
+			src, err := openSource(cfg)
 			if err != nil {
-				return usageErrorf("%v", err)
+				return err
 			}
-			src := newSource(cfg.network(), endpoint, cfg.timeout())
 
 			records, err := src.LedgerEntry(cmd.Context(), args[0])
 			if err != nil {
 				return err
 			}
 			return writeFixtures(cmd.Context(), src, records,
-				cfg.outDir(), cfg.prefix(), cfg.force(), cfg.maskAddresses(), stdout)
+				cfg.outDir(), cfg.prefix(), cfg.force(), cfg.maskAddresses(), cfg.sanitizer(), stdout)
 		},
 	}
+
+	txCmd.Flags().Uint32Var(&ledger, "ledger", 0,
+		"ledger the transaction closed in; needed to find it in a history archive")
 
 	cfg.bindCaptureFlags(cmd)
 	cfg.bindBatchFlags(txCmd)
@@ -356,7 +416,7 @@ transactions in one batch do not overwrite each other.`,
 // The check is static: no network, no chain, no test run. A fixture that
 // was hand-edited, or merged badly, should be caught while it is being
 // written rather than when a test fails weeks later.
-func newLintCmd(cfg *config, stdout, stderr io.Writer) *cobra.Command {
+func newLintCmd(stdout, stderr io.Writer) *cobra.Command {
 	return &cobra.Command{
 		Use:   "lint [paths...]",
 		Short: "Check golden fixtures for corruption",
@@ -433,9 +493,10 @@ func writeFixtures(
 	records []capture.Record,
 	outDir, prefix string,
 	force, maskAddresses bool,
+	sanitizer capture.Sanitizer,
 	stdout io.Writer,
 ) error {
-	written, err := writeRecords(ctx, src, records, outDir, prefix, force, maskAddresses)
+	written, err := writeRecords(ctx, src, records, outDir, prefix, force, maskAddresses, sanitizer)
 	if err != nil {
 		return err
 	}
@@ -467,6 +528,7 @@ func writeRecords(
 	records []capture.Record,
 	outDir, prefix string,
 	force, maskAddresses bool,
+	sanitizer capture.Sanitizer,
 ) ([]writtenFixture, error) {
 	if maskAddresses {
 		masked, err := capture.Anonymize(records)
@@ -477,6 +539,13 @@ func writeRecords(
 			masked[i].Anonymized = true
 		}
 		records = masked
+	}
+	if sanitizer.Enabled() {
+		sanitized, err := sanitizer.Sanitize(records)
+		if err != nil {
+			return nil, err
+		}
+		records = sanitized
 	}
 	fixtures, err := capture.Capture(ctx, src, records, now())
 	if err != nil {
@@ -523,7 +592,7 @@ func fixtureLedger(f *golden.Fixture) uint32 {
 // reads. When the formatter improves, that tree goes stale, and the only way
 // to fix it today is to re-record every fixture — which re-records the data
 // too. This command re-renders the tree and leaves the data alone.
-func newRefreshCmd(cfg *config, stdout, stderr io.Writer) *cobra.Command {
+func newRefreshCmd(stdout, stderr io.Writer) *cobra.Command {
 	var dryRun bool
 
 	cmd := &cobra.Command{

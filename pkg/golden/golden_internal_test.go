@@ -14,7 +14,7 @@ import (
 func envelopeXDR(t *testing.T) string {
 	t.Helper()
 
-	b, err := os.ReadFile(filepath.Join("..", "..", "testdata", "tx_failed.env.txt"))
+	b, err := os.ReadFile(filepath.Join("..", "fuzz", "testdata", "tx_failed.env.txt"))
 	if err != nil {
 		t.Fatalf("reading fixture: %v", err)
 	}

@@ -12,6 +12,11 @@
 //	go test ./... -focus.update
 //
 // The flag is namespaced so it never collides with a project's own -update.
+//
+// Fixtures may be stored gzip-compressed (a .golden.json.gz suffix writes
+// them that way), and reads are transparent about it; content is compared
+// after line-ending normalization, so a checkout on Windows asserts the same
+// as one on Linux.
 package golden
 
 import (
@@ -27,6 +32,7 @@ import (
 
 	"github.com/stellar-optics/stellar-xdr-lens/pkg/lens"
 	lensformat "github.com/stellar-optics/stellar-xdr-lens/pkg/lens/format"
+	"github.com/stellar/go-stellar-sdk/network"
 
 	"github.com/stellar-optics/stellar-focus/pkg/focus"
 )
@@ -70,6 +76,11 @@ type Fixture struct {
 
 // Provenance records where a captured fixture came from, so a stale fixture
 // can be traced and re-verified.
+//
+// NetworkPassphrase is recorded alongside the network name because the name
+// alone is ambiguous: a transaction hash and its signatures are bound to the
+// passphrase, and two private networks can share a name but not a
+// passphrase.
 type Provenance struct {
 	Network           string `json:"network"`
 	NetworkPassphrase string `json:"networkPassphrase,omitempty"`
@@ -78,6 +89,7 @@ type Provenance struct {
 	At                string `json:"at"`
 	Endpoint          string `json:"endpoint,omitempty"`
 	Anonymized        bool   `json:"anonymized,omitempty"`
+	Sanitized         bool   `json:"sanitized,omitempty"`
 }
 
 // Golden compares values against golden files on disk.
@@ -176,6 +188,30 @@ func (g *Golden) Assert(name string, actual focus.Value) bool {
 	return g.assert(g.t, name, actual, "", nil)
 }
 
+// Require compares a value against the named golden file and stops the test
+// when it does not match.
+//
+// It is the fatal counterpart of Assert, for the tests where everything
+// after the comparison would be meaningless: a fixture that does not exist,
+// a decode that failed, a transaction that was never built.
+//
+// The diagnostic is the one Assert reports — the same diff, in the same
+// layout, with the same -focus.update instructions — but it is delivered as
+// a single fatal message, so a test that stops still shows the reader
+// everything a test that continued would have shown.
+func (g *Golden) Require(name string, actual focus.Value) bool {
+	g.t.Helper()
+
+	// The comparison reports through a TB, and the report has to survive
+	// the failure, so the messages are collected and delivered together.
+	buffer := &messageBuffer{TB: g.t}
+	ok := g.assert(buffer, name, actual, "", nil)
+	if !ok {
+		g.t.Fatalf("%s", buffer.text())
+	}
+	return ok
+}
+
 // assert compares a value against the named golden file, reporting through
 // tb.
 //
@@ -190,7 +226,6 @@ func (g *Golden) assert(
 ) bool {
 	g.t.Helper()
 	tb.Helper()
-
 	path := g.Path(name)
 
 	if Update() {
@@ -202,6 +237,13 @@ func (g *Golden) assert(
 	}
 
 	want, err := LoadAs(path, g.format)
+	if errors.Is(err, os.ErrNotExist) {
+		// A compressed twin counts: a repository that gzipped its fixtures
+		// should not have to reconfigure every assertion to keep passing.
+		if gz, gzErr := LoadAs(path+GzipSuffix, g.format); gzErr == nil {
+			path, want, err = path+GzipSuffix, gz, nil
+		}
+	}
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			tb.Errorf("golden: %s does not exist yet.\n"+
@@ -248,6 +290,45 @@ func (g *Golden) options(extra []focus.Option) []focus.Option {
 	opts = append(opts, g.opts...)
 	opts = append(opts, extra...)
 	return opts
+}
+
+// messageBuffer collects the messages an assertion reports instead of
+// reporting them.
+//
+// It exists so that a fatal assertion can deliver its whole diagnostic as
+// one message. The diff and the command that re-records the fixture have to
+// reach the reader together: a reader who gets only the diff does not know
+// what to do about it, and a reader who gets only the remedy does not know
+// what changed.
+type messageBuffer struct {
+	focus.TB
+	messages []string
+}
+
+// Errorf records the message rather than reporting it.
+func (buf *messageBuffer) Errorf(format string, args ...any) {
+	buf.messages = append(buf.messages, fmt.Sprintf(format, args...))
+}
+
+// Fatalf records the message rather than reporting it.
+//
+// A comparison never fails fatally, so nothing should reach this; recording
+// keeps the whole diagnostic in one place if that ever changes.
+func (buf *messageBuffer) Fatalf(format string, args ...any) {
+	buf.messages = append(buf.messages, fmt.Sprintf(format, args...))
+}
+
+// text returns the collected messages, in the order they were reported and
+// with the same layout they would have had on the terminal.
+func (buf *messageBuffer) text() string {
+	var b strings.Builder
+	for _, m := range buf.messages {
+		b.WriteString(m)
+		if !strings.HasSuffix(m, "\n") {
+			b.WriteString("\n")
+		}
+	}
+	return b.String()
 }
 
 // write records a value as a golden file.
@@ -542,7 +623,23 @@ func RefreshedDecoded(f *Fixture) (json.RawMessage, error) {
 // unrecognised extension is read as JSON, which is what every fixture written
 // before the other formats existed is.
 func Load(path string) (*Fixture, error) {
-	return LoadAs(path, FormatForPath(path))
+	raw, err := ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	format := FormatForPath(path)
+	if bytes.HasPrefix(bytes.TrimSpace(raw), []byte("{")) {
+		format = JSON
+	}
+	serializer, err := SerializerFor(format)
+	if err != nil {
+		return nil, err
+	}
+	f, err := serializer.Unmarshal(raw)
+	if err != nil {
+		return nil, fmt.Errorf("parsing %s: %w", path, err)
+	}
+	return f, nil
 }
 
 // LoadAs reads a golden file in an explicit format.
@@ -554,7 +651,7 @@ func LoadAs(path string, format Format) (*Fixture, error) {
 		return nil, err
 	}
 
-	raw, err := os.ReadFile(path)
+	raw, err := ReadFile(path)
 	if err != nil {
 		return nil, err
 	}
@@ -585,23 +682,39 @@ func SaveAs(path string, f *Fixture, format Format) error {
 	if err != nil {
 		return err
 	}
+	return WriteFile(path, data)
+}
 
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return fmt.Errorf("creating %s: %w", filepath.Dir(path), err)
-	}
-	if err := os.WriteFile(path, data, 0o600); err != nil {
-		return fmt.Errorf("writing %s: %w", path, err)
-	}
-	return nil
+// KnownPassphrases maps the network names a capture records to the
+// passphrase those networks sign with.
+//
+// Only public networks are listed. A standalone or private network has a
+// passphrase of its own, which the capture source reports or the caller
+// supplies.
+var KnownPassphrases = map[string]string{
+	"testnet":   network.TestNetworkPassphrase,
+	"mainnet":   network.PublicNetworkPassphrase,
+	"futurenet": network.FutureNetworkPassphrase,
+}
+
+// PassphraseFor returns the passphrase of a known network, or an empty
+// string for a network it does not recognise.
+func PassphraseFor(networkName string) string {
+	return KnownPassphrases[networkName]
 }
 
 // NewProvenance records a capture at the given time.
-func NewProvenance(network, endpoint string, ledger uint32, txHash string, at time.Time) *Provenance {
+//
+// The network passphrase is filled in when the network is one of
+// KnownPassphrases; for any other network it is left empty for the caller to
+// set from the source or from an explicit value.
+func NewProvenance(networkName, endpoint string, ledger uint32, txHash string, at time.Time) *Provenance {
 	return &Provenance{
-		Network:  network,
-		Ledger:   ledger,
-		TxHash:   txHash,
-		At:       at.UTC().Format(time.RFC3339),
-		Endpoint: endpoint,
+		Network:           networkName,
+		NetworkPassphrase: PassphraseFor(networkName),
+		Ledger:            ledger,
+		TxHash:            txHash,
+		At:                at.UTC().Format(time.RFC3339),
+		Endpoint:          endpoint,
 	}
 }

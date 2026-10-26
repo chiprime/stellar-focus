@@ -20,7 +20,8 @@
         "txHash": {"type": "string"},
         "at": {"type": "string", "format": "date-time"},
         "endpoint": {"type": "string"},
-        "anonymized": {"type": "boolean"}
+        "anonymized": {"type": "boolean"},
+        "sanitized": {"type": "boolean"}
       }
     },
     "decoded": {}

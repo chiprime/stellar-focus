@@ -19,6 +19,7 @@ func clearFocusEnv(t *testing.T) {
 		"FOCUS_CONFIG",
 		"FOCUS_NETWORK",
 		"FOCUS_RPC_URL",
+		"FOCUS_SOURCE",
 		"FOCUS_TIMEOUT",
 		"FOCUS_COLOR",
 		"FOCUS_OUT",
@@ -349,10 +350,60 @@ func TestConfigFlagsAreAdvertised(t *testing.T) {
 	if err != nil {
 		t.Fatalf("--help: %v", err)
 	}
-	for _, want := range []string{"--config", "--network", "--rpc-url", "--timeout", "--color"} {
+	for _, want := range []string{"--config", "--network", "--rpc-url", "--source", "--timeout", "--color"} {
 		if !strings.Contains(stdout, want) {
 			t.Errorf("help does not mention %s:\n%s", want, stdout)
 		}
+	}
+}
+
+// TestSourceSelectsTheEndpoint checks that the source decides which service
+// the command talks to, since an RPC endpoint and a Horizon endpoint are
+// different services.
+func TestSourceSelectsTheEndpoint(t *testing.T) {
+	clearFocusEnv(t)
+
+	cfg := newConfig()
+	if err := cfg.load(); err != nil {
+		t.Fatalf("load() error = %v", err)
+	}
+	if got := cfg.source(); got != sourceRPC {
+		t.Errorf("source = %q, want %q", got, sourceRPC)
+	}
+	endpoint, err := cfg.endpoint()
+	if err != nil {
+		t.Fatalf("endpoint() error = %v", err)
+	}
+	if endpoint != capture.DefaultEndpoints[capture.NetworkTestnet] {
+		t.Errorf("endpoint = %q, want the RPC endpoint", endpoint)
+	}
+
+	cfg = newConfig()
+	cfg.v.Set(keySource, sourceHorizon)
+	if err := cfg.load(); err != nil {
+		t.Fatalf("load() error = %v", err)
+	}
+	endpoint, err = cfg.endpoint()
+	if err != nil {
+		t.Fatalf("endpoint() error = %v", err)
+	}
+	if endpoint != capture.DefaultHorizonEndpoints[capture.NetworkTestnet] {
+		t.Errorf("endpoint = %q, want the Horizon endpoint", endpoint)
+	}
+}
+
+func TestUnknownSourceIsRejected(t *testing.T) {
+	clearFocusEnv(t)
+
+	_, _, err := run(t, "--source", "carrier-pigeon", "version")
+	if err == nil {
+		t.Fatal("an unknown source was accepted")
+	}
+	if !IsUsage(err) {
+		t.Errorf("error does not classify as usage: %v", err)
+	}
+	if !strings.Contains(err.Error(), "source must be") {
+		t.Errorf("error %q does not explain the mistake", err)
 	}
 }
 

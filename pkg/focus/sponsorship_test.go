@@ -12,10 +12,10 @@ import (
 
 // sponsoredAccountEntryValue builds an account entry carrying a sponsor in its
 // V1 extension, the way the protocol records sponsorship.
-func sponsoredAccountEntryValue(t *testing.T, addr, sponsor string, balance int64) xdr.LedgerEntry {
+func sponsoredAccountEntryValue(t *testing.T, sponsor string) xdr.LedgerEntry {
 	t.Helper()
 
-	entry := accountEntryValue(t, addr, balance, xdr.NewThreshold(1, 0, 0, 0))
+	entry := accountEntryValue(t, testDest, 10_0000000, xdr.NewThreshold(1, 0, 0, 0))
 	aid := mustAccountID(t, sponsor)
 	entry.Ext = xdr.LedgerEntryExt{
 		V:  1,
@@ -27,7 +27,7 @@ func sponsoredAccountEntryValue(t *testing.T, addr, sponsor string, balance int6
 func TestAssertEntrySponsoredBy(t *testing.T) {
 	t.Parallel()
 
-	sponsored := sponsoredAccountEntryValue(t, testDest, testSource, 10_0000000)
+	sponsored := sponsoredAccountEntryValue(t, testSource)
 	key := ledgerKeyOf(t, sponsored)
 	_, lensKey, err := focus.Encode(key, "LedgerKey")
 	if err != nil {
@@ -54,7 +54,7 @@ func TestAssertEntrySponsoredBy(t *testing.T) {
 		{
 			"sponsorship transferred to another account",
 			metaV2(t, []xdr.LedgerEntryChange{
-				stateChange(sponsoredAccountEntryValue(t, testDest, testIssuer, 10_0000000)),
+				stateChange(sponsoredAccountEntryValue(t, testIssuer)),
 				updatedChange(sponsored),
 			}),
 			key, testSource,
@@ -96,14 +96,14 @@ func TestAssertEntrySponsoredBy(t *testing.T) {
 func TestAssertEntrySponsoredByFailureMessages(t *testing.T) {
 	t.Parallel()
 
-	sponsoredByIssuer := sponsoredAccountEntryValue(t, testDest, testIssuer, 10_0000000)
+	sponsoredByIssuer := sponsoredAccountEntryValue(t, testIssuer)
 	key := ledgerKeyOf(t, sponsoredByIssuer)
 
 	t.Run("wrong sponsor names the transition", func(t *testing.T) {
 		t.Parallel()
 
 		meta := metaV2(t, []xdr.LedgerEntryChange{
-			stateChange(sponsoredAccountEntryValue(t, testDest, testDest, 10_0000000)),
+			stateChange(sponsoredAccountEntryValue(t, testDest)),
 			updatedChange(sponsoredByIssuer),
 		})
 		tb := faketb.New()

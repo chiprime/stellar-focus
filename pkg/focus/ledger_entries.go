@@ -104,6 +104,19 @@ func AssertEntryDeleted(t TB, meta Value, key Value) bool {
 		xdr.LedgerEntryChangeTypeLedgerEntryRemoved)
 }
 
+// AssertLedgerKeyEqual compares two ledger keys structurally.
+//
+// Both sides accept the same forms as the other assertions: an xdr.LedgerKey,
+// base64 XDR, raw bytes or a decoded *lens.Value. The failure names the field
+// of the key that differs rather than the two base64 strings.
+//
+// A key built by pkg/ledgerkey can be compared directly against one read out
+// of a transaction meta or captured fixture.
+func AssertLedgerKeyEqual(t TB, want, got Value) bool {
+	t.Helper()
+	return assertEqual(t, "AssertLedgerKeyEqual", "LedgerKey", want, got)
+}
+
 // assertEntryChange is the shared implementation behind the three ledger
 // entry assertions.
 func assertEntryChange(t TB, assertion string, meta, key Value, want xdr.LedgerEntryChangeType) bool {
@@ -125,7 +138,7 @@ func assertEntryChange(t TB, assertion string, meta, key Value, want xdr.LedgerE
 	}
 
 	t.Errorf("%s: no ledger entry was %s for %s\n\n%s",
-		assertion, changeVerb(want), wantKey.label, indent(describeChanges(changes), "  "))
+		assertion, changeVerb(want), wantKey.label, indent(describeChanges(changes)))
 	return false
 }
 

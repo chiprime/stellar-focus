@@ -92,11 +92,10 @@ func (r *batchReporter) summary(stdout io.Writer) {
 
 // captureBatchCmd captures every transaction listed in a batch file.
 func captureBatchCmd(ctx context.Context, cfg *config, stdout, stderr io.Writer) error {
-	endpoint, err := capture.ResolveEndpoint(cfg.network(), cfg.rpcURL())
+	src, err := openSource(cfg)
 	if err != nil {
-		return usageErrorf("%v", err)
+		return err
 	}
-	src := newSource(cfg.network(), endpoint, cfg.timeout())
 
 	entries, err := readBatchEntries(cfg.batch(), stdin)
 	if err != nil {
@@ -187,7 +186,7 @@ func captureBatchEntry(
 	prefix := batchPrefix(cfg.prefix(), entry.prefix, entry.hash)
 
 	written, err := writeRecords(ctx, src, records, cfg.outDir(), prefix,
-		cfg.force(), cfg.maskAddresses())
+		cfg.force(), cfg.maskAddresses(), cfg.sanitizer())
 	if err != nil {
 		outcome.err = err
 		return outcome

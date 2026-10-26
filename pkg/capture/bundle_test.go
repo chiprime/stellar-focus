@@ -18,7 +18,7 @@ import (
 // drift) has more than one real payload to work with.
 func sorobanEnvXDR(t *testing.T) string {
 	t.Helper()
-	b, err := os.ReadFile(filepath.Join("..", "..", "testdata", "tx_soroban.env.txt"))
+	b, err := os.ReadFile(filepath.Join("..", "..", "pkg", "fuzz", "testdata", "tx_soroban.env.txt"))
 	if err != nil {
 		t.Fatalf("reading fixture: %v", err)
 	}

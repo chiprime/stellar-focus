@@ -28,9 +28,9 @@ import (
 //
 // The protocol caps a text memo at 28 bytes, so a longer want can never match
 // and the failure says so rather than leaving the reader to discover the cap.
-func AssertMemoText(t TB, envelope Value, want string) bool {
+func AssertMemoText(t TB, envelope Value, want string, opts ...Option) bool {
 	t.Helper()
-	return assertMemoText(t, "AssertMemoText", envelope, want)
+	return assertMemoText(t, newConfig(opts...), "AssertMemoText", envelope, want)
 }
 
 // AssertMemoTextEqual checks that the transaction carries a text memo with
@@ -38,22 +38,23 @@ func AssertMemoText(t TB, envelope Value, want string) bool {
 //
 // It is AssertMemoText under the name the other typed memo assertions use,
 // and behaves identically.
-func AssertMemoTextEqual(t TB, envelope Value, want string) bool {
+func AssertMemoTextEqual(t TB, envelope Value, want string, opts ...Option) bool {
 	t.Helper()
-	return assertMemoText(t, "AssertMemoTextEqual", envelope, want)
+	return assertMemoText(t, newConfig(opts...), "AssertMemoTextEqual", envelope, want)
 }
 
 // assertMemoText is the shared implementation behind the text memo
 // assertions.
-func assertMemoText(t TB, assertion string, envelope Value, want string) bool {
+func assertMemoText(t TB, c *config, assertion string, envelope Value, want string) bool {
 	t.Helper()
+	display := c.assertionName(assertion)
 
 	memo, decoded, ok := resolveMemo(t, assertion, envelope)
 	if !ok {
 		return false
 	}
 	if memo.Type != xdr.MemoTypeMemoText {
-		t.Errorf("%s", memoMismatch(assertion, memo, decoded, describeWantedText(want)))
+		t.Errorf("%s", memoMismatch(display, memo, decoded, describeWantedText(want)))
 		return false
 	}
 
@@ -65,14 +66,14 @@ func assertMemoText(t TB, assertion string, envelope Value, want string) bool {
 		return false
 	}
 	if !read {
-		t.Errorf("%s: the text memo could not be read; its XDR is malformed", assertion)
+		t.Errorf("%s: the text memo could not be read; its XDR is malformed", display)
 		return false
 	}
 	if got == want {
 		return true
 	}
 
-	msg := mismatchMessage(assertion, "text memo", want, got)
+	msg := mismatchMessage(assertion, "text memo", want, got, c)
 	if len(want) > maxTextMemoBytes {
 		msg += fmt.Sprintf("\n(a text memo holds at most %d bytes)", maxTextMemoBytes)
 	}
@@ -82,9 +83,9 @@ func assertMemoText(t TB, assertion string, envelope Value, want string) bool {
 
 // AssertMemoID checks that the transaction carries an id memo with exactly
 // this id. Id memos hold a uint64.
-func AssertMemoID(t TB, envelope Value, want uint64) bool {
+func AssertMemoID(t TB, envelope Value, want uint64, opts ...Option) bool {
 	t.Helper()
-	return assertMemoID(t, "AssertMemoID", envelope, want)
+	return assertMemoID(t, newConfig(opts...), "AssertMemoID", envelope, want)
 }
 
 // AssertMemoIDEqual checks that the transaction carries an id memo with
@@ -92,21 +93,22 @@ func AssertMemoID(t TB, envelope Value, want uint64) bool {
 //
 // It is AssertMemoID under the name the other typed memo assertions use, and
 // behaves identically.
-func AssertMemoIDEqual(t TB, envelope Value, want uint64) bool {
+func AssertMemoIDEqual(t TB, envelope Value, want uint64, opts ...Option) bool {
 	t.Helper()
-	return assertMemoID(t, "AssertMemoIDEqual", envelope, want)
+	return assertMemoID(t, newConfig(opts...), "AssertMemoIDEqual", envelope, want)
 }
 
 // assertMemoID is the shared implementation behind the id memo assertions.
-func assertMemoID(t TB, assertion string, envelope Value, want uint64) bool {
+func assertMemoID(t TB, c *config, assertion string, envelope Value, want uint64) bool {
 	t.Helper()
+	display := c.assertionName(assertion)
 
 	memo, decoded, ok := resolveMemo(t, assertion, envelope)
 	if !ok {
 		return false
 	}
 	if memo.Type != xdr.MemoTypeMemoId {
-		t.Errorf("%s", memoMismatch(assertion, memo, decoded, fmt.Sprintf("an id memo %d", want)))
+		t.Errorf("%s", memoMismatch(display, memo, decoded, fmt.Sprintf("an id memo %d", want)))
 		return false
 	}
 
@@ -118,13 +120,13 @@ func assertMemoID(t TB, assertion string, envelope Value, want uint64) bool {
 		return false
 	}
 	if !read {
-		t.Errorf("%s: the id memo could not be read; its XDR is malformed", assertion)
+		t.Errorf("%s: the id memo could not be read; its XDR is malformed", display)
 		return false
 	}
 	if uint64(got) == want {
 		return true
 	}
-	t.Errorf("%s", mismatchMessage(assertion, "id memo", want, uint64(got)))
+	t.Errorf("%s", mismatchMessage(assertion, "id memo", want, uint64(got), c))
 	return false
 }
 

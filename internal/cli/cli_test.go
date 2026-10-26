@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -16,15 +17,26 @@ import (
 
 const testHash = "2b2e276a8f99a2927580eca2c8d665c0adaef9526476f5549269798380a66648"
 
+// lastSourceKind records the kind of source the command asked for, so a test
+// can check that --source reached the source factory.
+var lastSourceKind string
+
 // withFake swaps the capture source and the clock so the commands run offline
 // and produce byte-stable output.
 func withFake(t *testing.T, src *fakesource.Source) {
 	t.Helper()
 
 	originalSource, originalNow := newSource, now
-	newSource = func(string, string, time.Duration) capture.Source { return src }
+	newSource = func(kind, _, _ string, _ time.Duration) capture.Source {
+		lastSourceKind = kind
+		return src
+	}
 	now = func() time.Time { return time.Date(2026, 8, 5, 12, 0, 0, 0, time.UTC) }
 	t.Cleanup(func() { newSource, now = originalSource, originalNow })
+
+	// The verification cache is a local artifact, so a test run keeps it in
+	// a temporary directory rather than leaving one in the working tree.
+	t.Setenv("FOCUS_VERIFY_CACHE", filepath.Join(t.TempDir(), "verify-cache.json"))
 }
 
 func run(t *testing.T, args ...string) (stdout, stderr string, err error) {
@@ -36,7 +48,7 @@ func run(t *testing.T, args ...string) (stdout, stderr string, err error) {
 
 func fixtureXDR(t *testing.T, name string) string {
 	t.Helper()
-	b, err := os.ReadFile(filepath.Join("..", "..", "testdata", name))
+	b, err := os.ReadFile(filepath.Join("..", "..", "pkg", "fuzz", "testdata", name))
 	if err != nil {
 		t.Fatalf("reading %s: %v", name, err)
 	}
@@ -79,6 +91,36 @@ func TestCaptureTxWritesFixtures(t *testing.T) {
 	}
 	if !strings.Contains(stdout, "wrote") {
 		t.Errorf("capture printed nothing useful:\n%s", stdout)
+	}
+}
+
+// TestCaptureUsesTheChosenSource checks that --source reaches the source
+// factory, which is the whole point of the flag.
+func TestCaptureUsesTheChosenSource(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+		want string
+	}{
+		{"the default", nil, "rpc"},
+		{"rpc", []string{"--source", "rpc"}, "rpc"},
+		{"horizon", []string{"--source", "horizon"}, "horizon"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			clearFocusEnv(t)
+			withFake(t, sourceWithTx(t))
+			lastSourceKind = ""
+
+			args := append([]string{"capture", "tx", testHash, "--out", t.TempDir()}, tc.args...)
+			if _, _, err := run(t, args...); err != nil {
+				t.Fatalf("Execute() error = %v", err)
+			}
+			if lastSourceKind != tc.want {
+				t.Errorf("the command asked for the %q source, want %q", lastSourceKind, tc.want)
+			}
+		})
 	}
 }
 
@@ -162,6 +204,219 @@ func TestVerifyReportsMatchingFixtures(t *testing.T) {
 	}
 	if !strings.Contains(stdout, "ok") || !strings.Contains(stdout, "2 checked") {
 		t.Errorf("verify output is not a usable summary:\n%s", stdout)
+	}
+}
+
+// TestVerifyJSONFormatEmitsAReport is the reason the format exists: a
+// pipeline has to be able to read the result without parsing a terminal.
+func TestVerifyJSONFormatEmitsAReport(t *testing.T) {
+	src := sourceWithTx(t)
+	withFake(t, src)
+	dir := t.TempDir()
+
+	if _, _, err := run(t, "capture", "tx", testHash, "--out", dir); err != nil {
+		t.Fatalf("capture failed: %v", err)
+	}
+
+	stdout, _, err := run(t, "verify", dir, "--format", "json")
+	if err != nil {
+		t.Fatalf("verify --format json failed: %v", err)
+	}
+
+	var report VerifyReport
+	if err := json.Unmarshal([]byte(stdout), &report); err != nil {
+		t.Fatalf("output is not JSON: %v\n%s", err, stdout)
+	}
+
+	if report.Total != 2 || report.Matched != 2 {
+		t.Errorf("report = %+v, want 2 fixtures and 2 matches", report)
+	}
+	if report.Drifted != 0 || report.Skipped != 0 || report.Errored != 0 {
+		t.Errorf("report counts drifted=%d skipped=%d errored=%d, want none",
+			report.Drifted, report.Skipped, report.Errored)
+	}
+	if len(report.Results) != 2 {
+		t.Fatalf("report has %d results, want 2:\n%s", len(report.Results), stdout)
+	}
+
+	for _, result := range report.Results {
+		if result.Status != statusMatched {
+			t.Errorf("%s has status %q, want %q", result.Path, result.Status, statusMatched)
+		}
+		if result.Type == "" {
+			t.Errorf("%s does not name the XDR type it holds", result.Path)
+		}
+		if !strings.HasSuffix(result.Path, ".golden.json") {
+			t.Errorf("%s is not a fixture path", result.Path)
+		}
+	}
+}
+
+// TestVerifyJSONFormatSuppressesTheHumanReport checks that the JSON is the
+// whole output: a document with a progress line mixed into it is not a
+// document.
+func TestVerifyJSONFormatSuppressesTheHumanReport(t *testing.T) {
+	withFake(t, sourceWithTx(t))
+	dir := t.TempDir()
+
+	if _, _, err := run(t, "capture", "tx", testHash, "--out", dir); err != nil {
+		t.Fatalf("capture failed: %v", err)
+	}
+
+	stdout, stderr, err := run(t, "verify", dir, "--format", "json")
+	if err != nil {
+		t.Fatalf("verify --format json failed: %v", err)
+	}
+
+	for _, unwanted := range []string{"checked:", "ok\n", "SKIP", "DRIFTED"} {
+		if strings.Contains(stdout, unwanted) {
+			t.Errorf("the JSON output contains human-readable text %q:\n%s", unwanted, stdout)
+		}
+	}
+	if stderr != "" {
+		t.Errorf("the JSON run wrote to stderr:\n%s", stderr)
+	}
+
+	var report VerifyReport
+	if err := json.Unmarshal([]byte(stdout), &report); err != nil {
+		t.Fatalf("output is not JSON: %v\n%s", err, stdout)
+	}
+}
+
+// TestVerifyJSONFormatNamesTheDriftedFields checks that a drifted fixture
+// says what changed, so a report can quote it.
+func TestVerifyJSONFormatNamesTheDriftedFields(t *testing.T) {
+	src := sourceWithTx(t)
+	withFake(t, src)
+	dir := t.TempDir()
+
+	if _, _, err := run(t, "capture", "tx", testHash, "--out", dir); err != nil {
+		t.Fatalf("capture failed: %v", err)
+	}
+
+	// The chain now returns something else for the same hash.
+	src.Transactions[testHash] = []capture.Record{
+		{Name: "envelope", Type: "TransactionEnvelope", XDR: fixtureXDR(t, "tx_success.env.txt"),
+			Ledger: 1234, TxHash: testHash},
+		{Name: "result", Type: "TransactionResult", XDR: fixtureXDR(t, "tx_failed.res.txt"),
+			Ledger: 1234, TxHash: testHash},
+	}
+
+	stdout, _, err := run(t, "verify", dir, "--format", "json")
+	if err == nil {
+		t.Fatal("verify reported success despite drift")
+	}
+	if code, _ := ExitCode(err); code != ExitDrift {
+		t.Errorf("exit code %d, want %d", code, ExitDrift)
+	}
+
+	var report VerifyReport
+	if err := json.Unmarshal([]byte(stdout), &report); err != nil {
+		t.Fatalf("output is not JSON: %v\n%s", err, stdout)
+	}
+	if report.Drifted != 1 {
+		t.Errorf("report counts %d drifted, want 1:\n%s", report.Drifted, stdout)
+	}
+
+	var drifted *VerifyItemResult
+	for i := range report.Results {
+		if report.Results[i].Status == statusDrifted {
+			drifted = &report.Results[i]
+		}
+	}
+	if drifted == nil {
+		t.Fatalf("no drifted fixture in the report:\n%s", stdout)
+	}
+	if drifted.DiffCount == 0 || len(drifted.DiffPaths) != drifted.DiffCount {
+		t.Errorf("drifted fixture reports %d differences and %d paths, want the same non-zero count:\n%s",
+			drifted.DiffCount, len(drifted.DiffPaths), stdout)
+	}
+	if drifted.Type != "TransactionEnvelope" {
+		t.Errorf("drifted fixture has type %q, want TransactionEnvelope", drifted.Type)
+	}
+}
+
+// TestVerifyJSONFormatKeepsTheExitCodes checks that the format changes what
+// is printed and nothing else: a CI job's pass and fail must not depend on
+// how the result is rendered.
+func TestVerifyJSONFormatKeepsTheExitCodes(t *testing.T) {
+	t.Run("drift", func(t *testing.T) {
+		src := sourceWithTx(t)
+		withFake(t, src)
+		dir := t.TempDir()
+
+		if _, _, err := run(t, "capture", "tx", testHash, "--out", dir); err != nil {
+			t.Fatalf("capture failed: %v", err)
+		}
+		src.Transactions[testHash] = driftedRecords(t)
+
+		_, _, err := run(t, "verify", dir, "--format", "json")
+		if err == nil {
+			t.Fatal("verify reported success despite drift")
+		}
+		if code, _ := ExitCode(err); code != ExitDrift {
+			t.Errorf("exit code %d, want %d", code, ExitDrift)
+		}
+	})
+
+	t.Run("uncheckable", func(t *testing.T) {
+		src := sourceWithTx(t)
+		withFake(t, src)
+		dir := t.TempDir()
+
+		if _, _, err := run(t, "capture", "tx", testHash, "--out", dir); err != nil {
+			t.Fatalf("capture failed: %v", err)
+		}
+		src.Err = errors.New("endpoint unreachable")
+
+		_, _, err := run(t, "verify", dir, "--format", "json")
+		if err == nil {
+			t.Fatal("verify reported success when no fixture could be checked")
+		}
+		if code, _ := ExitCode(err); code != ExitFailure {
+			t.Errorf("exit code %d, want %d", code, ExitFailure)
+		}
+	})
+}
+
+// TestVerifyJSONFormatReportsAFailedRun checks that a run that could not
+// check anything still produces a document: a pipeline that reads the
+// output should not have to handle an empty file.
+func TestVerifyJSONFormatReportsAFailedRun(t *testing.T) {
+	withFake(t, sourceWithTx(t))
+
+	stdout, _, err := run(t, "verify", t.TempDir(), "--format", "json")
+	if err == nil {
+		t.Fatal("verify succeeded with no fixtures to check")
+	}
+
+	var report VerifyReport
+	if err := json.Unmarshal([]byte(stdout), &report); err != nil {
+		t.Fatalf("output is not JSON: %v\n%s", err, stdout)
+	}
+	if report.Error == "" {
+		t.Errorf("the report does not say what went wrong:\n%s", stdout)
+	}
+}
+
+// TestVerifyRejectsAnUnknownFormat checks that a typo is refused before any
+// work is done, and that it says what the choices are.
+func TestVerifyRejectsAnUnknownFormat(t *testing.T) {
+	src := sourceWithTx(t)
+	withFake(t, src)
+
+	_, _, err := run(t, "verify", t.TempDir(), "--format", "yaml")
+	if err == nil {
+		t.Fatal("an unknown format was accepted")
+	}
+	if !IsUsage(err) {
+		t.Errorf("error %v is not a usage error", err)
+	}
+	if !strings.Contains(err.Error(), "text") || !strings.Contains(err.Error(), "json") {
+		t.Errorf("error does not name the formats there are: %v", err)
+	}
+	if src.Calls != 0 {
+		t.Errorf("the network was contacted %d time(s) for an invalid format", src.Calls)
 	}
 }
 
@@ -735,8 +990,8 @@ func TestVerifyChecksNestedFixtures(t *testing.T) {
 	if err := os.MkdirAll(nested, 0o755); err != nil {
 		t.Fatalf("creating %s: %v", nested, err)
 	}
-	captureIntoDir(t, src, dir)
-	captureIntoDir(t, src, nested)
+	captureIntoDir(t, dir)
+	captureIntoDir(t, nested)
 
 	stdout, stderr, err := run(t, "verify", dir)
 	if err != nil {
@@ -753,7 +1008,7 @@ func TestVerifyAcceptsAPattern(t *testing.T) {
 	withFake(t, src)
 
 	dir := t.TempDir()
-	captureIntoDir(t, src, dir)
+	captureIntoDir(t, dir)
 
 	stdout, stderr, err := run(t, "verify", filepath.Join(dir, "*.golden.json"))
 	if err != nil {

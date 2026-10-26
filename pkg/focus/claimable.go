@@ -85,7 +85,7 @@ func AssertClaimableBalanceCreated(t TB, meta Value, claimant Value, amount int6
 		t.Errorf("%s: the transaction created no claimable balance; "+
 			"want %s claimable by account %s\n\n%s",
 			assertion, amountStroops(xdr.Int64(amount), ""), shorten(addr),
-			indent(describeChanges(changes), "  "))
+			indent(describeChanges(changes)))
 		return false
 	}
 
@@ -102,7 +102,7 @@ func AssertClaimableBalanceCreated(t TB, meta Value, claimant Value, amount int6
 	if len(forClaimant) == 0 {
 		t.Errorf("%s: the transaction created %s, none of them claimable by account %s\n\n%s",
 			assertion, pluralBalances(len(created)), shorten(addr),
-			indent(describeClaimableBalances(created), "  "))
+			indent(describeClaimableBalances(created)))
 		return false
 	}
 	for _, cb := range forClaimant {
@@ -120,14 +120,14 @@ func AssertClaimableBalanceCreated(t TB, meta Value, claimant Value, amount int6
 			assertion, shortenID(cb.id), shorten(addr),
 			amountStroops(cb.amount, assetUnit(cb.asset)),
 			amountStroops(xdr.Int64(amount), assetUnit(cb.asset)),
-			indent(describeClaimableBalances(created), "  "))
+			indent(describeClaimableBalances(created)))
 		return false
 	}
 	t.Errorf("%s: account %s can claim %s, holding %s; want one of %s\n\n%s",
 		assertion, shorten(addr), pluralBalances(len(forClaimant)),
 		strings.Join(balanceAmounts(forClaimant), ", "),
 		amountStroops(xdr.Int64(amount), ""),
-		indent(describeClaimableBalances(created), "  "))
+		indent(describeClaimableBalances(created)))
 	return false
 }
 

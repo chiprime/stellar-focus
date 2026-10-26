@@ -88,12 +88,12 @@ func AssertEntrySponsoredBy(t TB, meta Value, targetEntry, sponsorAccount Value)
 
 	if !seen {
 		t.Errorf("%s: the transaction made no ledger change to %s\n\n%s",
-			assertion, key.label, indent(describeChanges(changes), "  "))
+			assertion, key.label, indent(describeChanges(changes)))
 		return false
 	}
 	if removed || entry == nil {
 		t.Errorf("%s: the transaction removed %s, which carries no sponsorship to inspect\n\n%s",
-			assertion, key.label, indent(describeEntryChanges(changes, key.keyID), "  "))
+			assertion, key.label, indent(describeEntryChanges(changes, key.keyID)))
 		return false
 	}
 
@@ -108,7 +108,7 @@ func AssertEntrySponsoredBy(t TB, meta Value, targetEntry, sponsorAccount Value)
 	t.Errorf("%s: %s is %s, want sponsored by %s\n\n  %s\n\n%s",
 		assertion, key.label, after.describe(), shorten(want),
 		describeSponsorshipTransition(before, after),
-		indent(describeEntryChanges(changes, key.keyID), "  "))
+		indent(describeEntryChanges(changes, key.keyID)))
 	return false
 }
 

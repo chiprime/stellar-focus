@@ -411,6 +411,8 @@ func SimulatedReturnValue(t focus.TB, result *simulate.SimulateResult, want focu
 func InstructionsBelow(t focus.TB, result *simulate.SimulateResult, limit uint32) {
 	t.Helper()
 	focus.AssertInstructionsBelow(fatal(t), result, limit)
+}
+
 // ContractError is focus.AssertContractError, stopping the test on failure.
 func ContractError(t focus.TB, metaOrResult focus.Value, wantType xdr.ScErrorType, wantCode uint32) {
 	t.Helper()

@@ -550,6 +550,7 @@ func AssertResourceFee(t TB, envelope Value, wantFee int64) bool {
 	t.Errorf("%s: resource fee is %s, want %s", assertion, stroops(got), stroops(wantFee))
 	return false
 }
+
 // AssertContractError checks that a contract invocation failed with a
 // particular error, and that the error is the one the test expects.
 //

@@ -126,7 +126,7 @@ func formatNode(n *lens.Node, indent int, isRoot bool, rootType string) string {
 
 // formatKnownStruct provides enriched formatting for known XDR struct types.
 func formatKnownStruct(n *lens.Node, indent int, rootType string) string {
-	if n == nil || n.Kind != lens.KindStruct {
+	if n == nil {
 		return ""
 	}
 
@@ -140,9 +140,18 @@ func formatKnownStruct(n *lens.Node, indent int, rootType string) string {
 		return formatScValNode(n, indent)
 	}
 
-	// Check for Asset type
+	// Check for Asset type (struct or scalar)
 	if n.TypeName == "Asset" {
 		return formatAssetNode(n, indent)
+	}
+
+	// For non-struct types, only handle specific known types
+	if n.Kind != lens.KindStruct {
+		// Check for LiquidityPoolType scalar
+		if n.TypeName == "LiquidityPoolType" {
+			return formatLiquidityPoolTypeNode(n, indent)
+		}
+		return ""
 	}
 
 	// Check for OperationBody type
@@ -158,11 +167,6 @@ func formatKnownStruct(n *lens.Node, indent int, rootType string) string {
 	// Check for Result types (PaymentResult, etc.)
 	if strings.HasSuffix(n.TypeName, "Result") && n.TypeName != "Result" && n.TypeName != "TransactionResult" {
 		return formatResultNode(n, indent)
-	}
-
-	// Check for LiquidityPoolType
-	if n.TypeName == "LiquidityPoolType" {
-		return formatLiquidityPoolTypeNode(n, indent)
 	}
 
 	return ""
@@ -291,12 +295,22 @@ func formatScValNode(n *lens.Node, indent int) string {
 
 	scValType := ""
 	var val any
+	var addressAccountID string
 
 	for _, child := range n.Children {
 		switch child.Name {
 		case "Type":
 			if child.Value != nil {
 				scValType = fmt.Sprintf("%v", child.Value)
+			}
+		case "Address":
+			// Address is a struct with Type and AccountId/ContractId
+			if child.Kind == lens.KindStruct {
+				for _, gc := range child.Children {
+					if gc.Name == "AccountId" && gc.Value != nil {
+						addressAccountID = fmt.Sprintf("%v", gc.Value)
+					}
+				}
 			}
 		default:
 			// The value field - could be B, U32, I32, U64, I64, Str, Sym, Bytes, Vec, Map, Address, etc.
@@ -374,10 +388,13 @@ func formatScValNode(n *lens.Node, indent int) string {
 		} else {
 			formatted = "map"
 		}
-	case "ScValTypeScvAddr":
-		if val != nil {
+	case "ScValTypeScvAddress":
+		switch {
+		case addressAccountID != "":
+			formatted = fmt.Sprintf("addr(%s)", addressAccountID)
+		case val != nil:
 			formatted = fmt.Sprintf("addr(%v)", val)
-		} else {
+		default:
 			formatted = "addr"
 		}
 	default:
@@ -396,6 +413,17 @@ func formatScValNode(n *lens.Node, indent int) string {
 func formatAssetNode(n *lens.Node, indent int) string {
 	var b strings.Builder
 	prefix := strings.Repeat("  ", indent)
+
+	// Handle scalar Asset (lens returns enriched value directly)
+	if n.Kind == lens.KindScalar && n.Value != nil {
+		formatted := fmt.Sprintf("%v", n.Value)
+		if n.Name != "" {
+			fmt.Fprintf(&b, "%s%s: %s", prefix, n.Name, formatted)
+		} else {
+			fmt.Fprintf(&b, "%s%s", prefix, formatted)
+		}
+		return b.String()
+	}
 
 	assetType := ""
 	var code string

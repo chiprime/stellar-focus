@@ -517,12 +517,325 @@ func ptr[T any](v T) *T {
 	return &v
 }
 
-// creditAsset builds a credit asset with the test issuer.
-func creditAsset(t *testing.T, code string) xdr.Asset {
-	t.Helper()
-	var asset xdr.Asset
-	if err := asset.SetCredit(code, mustAccountID(t, testIssuer)); err != nil {
-		t.Fatalf("building asset %s: %v", code, err)
+// TestPrettyAssetDirect tests that PrettyAs formats Asset directly.
+func TestPrettyAssetDirect(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		asset    xdr.Asset
+		contains string
+	}{
+		{
+			name:     "native",
+			asset:    xdr.Asset{Type: xdr.AssetTypeAssetTypeNative},
+			contains: "native",
+		},
+		{
+			name: "credit alphanum4",
+			asset: func() xdr.Asset {
+				var a xdr.Asset
+				aid := mustAccountID(t, testIssuer)
+				a.SetCredit("USDC", aid)
+				return a
+			}(),
+			contains: "USDC:GA2JRQOF6EA3HQWDCEDBPPMLYPJCFLDDGYZLEQGMS5SOBQIB3BAFHVAW",
+		},
+		{
+			name: "credit alphanum12",
+			asset: func() xdr.Asset {
+				var a xdr.Asset
+				aid := mustAccountID(t, testIssuer)
+				a.SetCredit("VERYLONGCODE", aid)
+				return a
+			}(),
+			contains: "VERYLONGCODE:GA2JRQOF6EA3HQWDCEDBPPMLYPJCFLDDGYZLEQGMS5SOBQIB3BAFHVAW",
+		},
 	}
-	return asset
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			b, err := tc.asset.MarshalBinary()
+			if err != nil {
+				t.Fatalf("marshal: %v", err)
+			}
+			output := focus.PrettyAs("Asset", b)
+			if !strings.Contains(output, tc.contains) {
+				t.Errorf("Pretty output missing %q:\n%s", tc.contains, output)
+			}
+		})
+	}
+}
+
+// TestPrettyScValComplex tests complex ScVal types (Vec, Map, Addr, Bytes).
+func TestPrettyScValComplex(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		val  xdr.ScVal
+		want string
+	}{
+		{
+			name: "bytes",
+			val: xdr.ScVal{
+				Type:  xdr.ScValTypeScvBytes,
+				Bytes: ptr(xdr.ScBytes([]byte{0x01, 0x02, 0x03})),
+			},
+			want: "bytes",
+		},
+		{
+			name: "vec",
+			val: func() xdr.ScVal {
+				vec := xdr.ScVec{
+					{Type: xdr.ScValTypeScvU32, U32: ptr(xdr.Uint32(1))},
+					{Type: xdr.ScValTypeScvU32, U32: ptr(xdr.Uint32(2))},
+				}
+				vecPtr := &vec
+				return xdr.ScVal{
+					Type: xdr.ScValTypeScvVec,
+					Vec:  &vecPtr,
+				}
+			}(),
+			want: "vec",
+		},
+		{
+			name: "map",
+			val: func() xdr.ScVal {
+				m := xdr.ScMap{
+					{Key: xdr.ScVal{Type: xdr.ScValTypeScvSymbol, Sym: ptr(xdr.ScSymbol("key"))}, Val: xdr.ScVal{Type: xdr.ScValTypeScvU32, U32: ptr(xdr.Uint32(42))}},
+				}
+				mPtr := &m
+				return xdr.ScVal{
+					Type: xdr.ScValTypeScvMap,
+					Map:  &mPtr,
+				}
+			}(),
+			want: "map",
+		},
+		{
+			name: "address",
+			val: xdr.ScVal{
+				Type: xdr.ScValTypeScvAddress,
+				Address: &xdr.ScAddress{
+					AccountId: func() *xdr.AccountId {
+						aid := mustAccountID(t, testSource)
+						return &aid
+					}(),
+				},
+			},
+			want: "addr",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			b, err := tc.val.MarshalBinary()
+			if err != nil {
+				t.Fatalf("marshal: %v", err)
+			}
+			output := focus.PrettyAs("ScVal", b)
+			if !strings.Contains(output, tc.want) {
+				t.Errorf("Pretty output missing %q:\n%s", tc.want, output)
+			}
+		})
+	}
+}
+
+// TestPrettyKeyFieldsZero tests that key fields are shown even when zero.
+func TestPrettyKeyFieldsZero(t *testing.T) {
+	t.Parallel()
+
+	// Test with zero SeqNum (should still show)
+	env := xdr.TransactionEnvelope{
+		Type: xdr.EnvelopeTypeEnvelopeTypeTx,
+		V1: &xdr.TransactionV1Envelope{
+			Tx: xdr.Transaction{
+				SourceAccount: mustMuxed(t, testSource),
+				Fee:           100,
+				SeqNum:        0, // zero sequence number
+				Cond:          xdr.Preconditions{Type: xdr.PreconditionTypePrecondNone},
+				Memo:          xdr.Memo{Type: xdr.MemoTypeMemoNone},
+				Operations:    []xdr.Operation{},
+			},
+		},
+	}
+	b, err := env.MarshalBinary()
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	output := focus.PrettyAs("TransactionEnvelope", b)
+
+	// SeqNum is a key field, should be shown even when zero
+	if !strings.Contains(output, "SeqNum: 0") {
+		t.Errorf("Pretty output should show zero SeqNum:\n%s", output)
+	}
+
+	// Fee is a key field, should be shown
+	if !strings.Contains(output, "Fee: 100") {
+		t.Errorf("Pretty output should show Fee:\n%s", output)
+	}
+}
+
+// TestPrettyResultCodes tests various result code formats.
+func TestPrettyResultCodes(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		txCode   xdr.TransactionResultCode
+		opCode   xdr.PaymentResultCode
+		contains string
+	}{
+		{"txSuccess", xdr.TransactionResultCodeTxSuccess, xdr.PaymentResultCodePaymentSuccess, "txSuccess"},
+		{"txFailed", xdr.TransactionResultCodeTxFailed, xdr.PaymentResultCodePaymentUnderfunded, "txFailed"},
+		{"paymentSuccess", xdr.TransactionResultCodeTxSuccess, xdr.PaymentResultCodePaymentSuccess, "paymentSuccess"},
+		{"paymentUnderfunded", xdr.TransactionResultCodeTxFailed, xdr.PaymentResultCodePaymentUnderfunded, "paymentUnderfunded"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			res := buildResult(t, tc.txCode, paymentResult(tc.opCode))
+			output := focus.Pretty(res)
+			if !strings.Contains(output, tc.contains) {
+				t.Errorf("Pretty output missing %q:\n%s", tc.contains, output)
+			}
+		})
+	}
+}
+
+// TestPrettyDataValue tests DataValue formatting.
+func TestPrettyDataValue(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		value    []byte
+		contains string
+	}{
+		{"printable", []byte("hello world"), "hello world"},
+		{"empty", []byte{}, `""`},
+		{"non-printable", []byte{0x01, 0x02, 0x03}, "010203"},
+		{"long", func() []byte {
+			b := make([]byte, 40)
+			for i := range b {
+				b[i] = byte(i)
+			}
+			return b
+		}(), "00010203"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			entry := dataLedgerEntryValue(t, testSource, "config", tc.value)
+			output := focus.Pretty(entry)
+			if !strings.Contains(output, tc.contains) {
+				t.Errorf("Pretty output missing %q:\n%s", tc.contains, output)
+			}
+		})
+	}
+}
+
+// TestPrettyScValVecMapNested tests nested Vec and Map in ScVal.
+func TestPrettyScValVecMapNested(t *testing.T) {
+	t.Parallel()
+
+	// Test vec with mixed types
+	vecVal := func() xdr.ScVal {
+		vec := xdr.ScVec{
+			{Type: xdr.ScValTypeScvU32, U32: ptr(xdr.Uint32(1))},
+			{Type: xdr.ScValTypeScvString, Str: ptr(xdr.ScString("hello"))},
+			{Type: xdr.ScValTypeScvSymbol, Sym: ptr(xdr.ScSymbol("sym"))},
+		}
+		vecPtr := &vec
+		return xdr.ScVal{
+			Type: xdr.ScValTypeScvVec,
+			Vec:  &vecPtr,
+		}
+	}()
+	b, err := vecVal.MarshalBinary()
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	output := focus.PrettyAs("ScVal", b)
+	if !strings.Contains(output, "vec") {
+		t.Errorf("Pretty output missing vec:\n%s", output)
+	}
+
+	// Test map
+	mapVal := func() xdr.ScVal {
+		m := xdr.ScMap{
+			{Key: xdr.ScVal{Type: xdr.ScValTypeScvSymbol, Sym: ptr(xdr.ScSymbol("a"))}, Val: xdr.ScVal{Type: xdr.ScValTypeScvU32, U32: ptr(xdr.Uint32(1))}},
+			{Key: xdr.ScVal{Type: xdr.ScValTypeScvSymbol, Sym: ptr(xdr.ScSymbol("b"))}, Val: xdr.ScVal{Type: xdr.ScValTypeScvU32, U32: ptr(xdr.Uint32(2))}},
+		}
+		mPtr := &m
+		return xdr.ScVal{
+			Type: xdr.ScValTypeScvMap,
+			Map:  &mPtr,
+		}
+	}()
+	b2, err := mapVal.MarshalBinary()
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	output2 := focus.PrettyAs("ScVal", b2)
+	if !strings.Contains(output2, "map") {
+		t.Errorf("Pretty output missing map:\n%s", output2)
+	}
+}
+
+// TestPrettyOperationTypeFormatting tests operation type formatting.
+func TestPrettyOperationTypeFormatting(t *testing.T) {
+	t.Parallel()
+
+	ops := []struct {
+		name string
+		op   xdr.Operation
+		want string
+	}{
+		{"payment", paymentOp(t, 100), "payment"},
+		{"createAccount", createAccountOp(t), "create_account"},
+		{"pathPaymentStrictReceive", pathPaymentStrictReceiveOp(t), "path_payment_strict_receive"},
+		{"manageSellOffer", manageSellOfferOp(t), "manage_sell_offer"},
+		{"changeTrust", changeTrustOp(t), "change_trust"},
+		{"allowTrust", allowTrustOp(t), "allow_trust"},
+		{"accountMerge", accountMergeOp(t), "account_merge"},
+		{"inflation", inflationOp(t), "inflation"},
+		{"manageData", manageDataOp(t), "manage_data"},
+		{"bumpSequence", bumpSequenceOp(t), "bump_sequence"},
+		{"manageBuyOffer", manageBuyOfferOp(t), "manage_buy_offer"},
+		{"createPassiveSellOffer", createPassiveSellOfferOp(t), "create_passive_sell_offer"},
+		{"pathPaymentStrictSend", pathPaymentStrictSendOp(t), "path_payment_strict_send"},
+		{"createClaimableBalance", createClaimableBalanceOp(t), "create_claimable_balance"},
+		{"claimClaimableBalance", claimClaimableBalanceOp(t), "claim_claimable_balance"},
+		{"beginSponsoringFutureReserves", beginSponsoringFutureReservesOp(t), "begin_sponsoring_future_reserves"},
+		{"endSponsoringFutureReserves", endSponsoringFutureReservesOp(t), "end_sponsoring_future_reserves"},
+		{"revokeSponsorship", revokeSponsorshipOp(t), "revoke_sponsorship"},
+		{"clawback", clawbackOp(t), "clawback"},
+		{"clawbackClaimableBalance", clawbackClaimableBalanceOp(t), "clawback_claimable_balance"},
+		{"setTrustLineFlags", setTrustLineFlagsOp(t), "set_trust_line_flags"},
+		{"liquidityPoolDeposit", liquidityPoolDepositOp(t), "liquidity_pool_deposit"},
+		{"liquidityPoolWithdraw", liquidityPoolWithdrawOp(t), "liquidity_pool_withdraw"},
+		{"invokeHostFunction", invokeHostFunctionOp(t), "invoke_host_function"},
+		{"extendFootprintTtl", extendFootprintTtlOp(t), "extend_footprint_ttl"},
+		{"restoreFootprint", restoreFootprintOp(t), "restore_footprint"},
+	}
+
+	for _, tc := range ops {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			b, err := tc.op.MarshalBinary()
+			if err != nil {
+				t.Fatalf("marshal: %v", err)
+			}
+			output := focus.PrettyAs("Operation", b)
+			if !strings.Contains(output, tc.want) {
+				t.Errorf("Pretty output missing %q:\n%s", tc.want, output)
+			}
+		})
+	}
 }

@@ -62,6 +62,314 @@ func creditPaymentOp(tb testing.TB, amount int64) xdr.Operation {
 	}}
 }
 
+func endSponsoringFutureReservesOp(t *testing.T) xdr.Operation {
+	t.Helper()
+	return xdr.Operation{Body: xdr.OperationBody{
+		Type: xdr.OperationTypeEndSponsoringFutureReserves,
+	}}
+}
+
+func revokeSponsorshipOp(t *testing.T) xdr.Operation {
+	t.Helper()
+	key := ledgerKeyOf(t, accountEntryValue(t, testSource, 1000, xdr.Thresholds{}))
+	return xdr.Operation{Body: xdr.OperationBody{
+		Type: xdr.OperationTypeRevokeSponsorship,
+		RevokeSponsorshipOp: &xdr.RevokeSponsorshipOp{
+			Type:      xdr.RevokeSponsorshipTypeRevokeSponsorshipLedgerEntry,
+			LedgerKey: &key,
+		},
+	}}
+}
+
+func clawbackOp(t *testing.T) xdr.Operation {
+	t.Helper()
+	return xdr.Operation{Body: xdr.OperationBody{
+		Type: xdr.OperationTypeClawback,
+		ClawbackOp: &xdr.ClawbackOp{
+			Asset:  creditAsset(t, "USDC"),
+			From:   mustMuxed(t, testDest),
+			Amount: xdr.Int64(50_0000000),
+		},
+	}}
+}
+
+func clawbackClaimableBalanceOp(t *testing.T) xdr.Operation {
+	t.Helper()
+	return xdr.Operation{Body: xdr.OperationBody{
+		Type: xdr.OperationTypeClawbackClaimableBalance,
+		ClawbackClaimableBalanceOp: &xdr.ClawbackClaimableBalanceOp{
+			BalanceId: claimableBalanceIDValue(1),
+		},
+	}}
+}
+
+func setTrustLineFlagsOp(t *testing.T) xdr.Operation {
+	t.Helper()
+	return xdr.Operation{Body: xdr.OperationBody{
+		Type: xdr.OperationTypeSetTrustLineFlags,
+		SetTrustLineFlagsOp: &xdr.SetTrustLineFlagsOp{
+			Trustor:    mustAccountID(t, testSource),
+			Asset:      creditAsset(t, "USDC"),
+			SetFlags:   xdr.Uint32(xdr.TrustLineFlagsAuthorizedFlag),
+			ClearFlags: 0,
+		},
+	}}
+}
+
+func liquidityPoolDepositOp(t *testing.T) xdr.Operation {
+	t.Helper()
+	id := poolIDValue(1)
+	return xdr.Operation{Body: xdr.OperationBody{
+		Type: xdr.OperationTypeLiquidityPoolDeposit,
+		LiquidityPoolDepositOp: &xdr.LiquidityPoolDepositOp{
+			LiquidityPoolId: id,
+			MaxAmountA:      xdr.Int64(100_0000000),
+			MaxAmountB:      xdr.Int64(50_0000000),
+			MinPrice:        xdr.Price{N: xdr.Int32(1), D: xdr.Int32(1)},
+			MaxPrice:        xdr.Price{N: xdr.Int32(2), D: xdr.Int32(1)},
+		},
+	}}
+}
+
+func liquidityPoolWithdrawOp(t *testing.T) xdr.Operation {
+	t.Helper()
+	id := poolIDValue(1)
+	return xdr.Operation{Body: xdr.OperationBody{
+		Type: xdr.OperationTypeLiquidityPoolWithdraw,
+		LiquidityPoolWithdrawOp: &xdr.LiquidityPoolWithdrawOp{
+			LiquidityPoolId: id,
+			Amount:          xdr.Int64(1000),
+			MinAmountA:      xdr.Int64(100_000000),
+			MinAmountB:      xdr.Int64(50_000000),
+		},
+	}}
+}
+
+func invokeHostFunctionOp(t *testing.T) xdr.Operation {
+	t.Helper()
+	var cid xdr.ContractId
+	copy(cid[:], []byte("focus-test-contract-id-32bytes!!"))
+	return xdr.Operation{Body: xdr.OperationBody{
+		Type: xdr.OperationTypeInvokeHostFunction,
+		InvokeHostFunctionOp: &xdr.InvokeHostFunctionOp{
+			HostFunction: xdr.HostFunction{
+				Type: xdr.HostFunctionTypeHostFunctionTypeInvokeContract,
+				InvokeContract: &xdr.InvokeContractArgs{
+					ContractAddress: xdr.ScAddress{
+						Type:       xdr.ScAddressTypeScAddressTypeContract,
+						ContractId: &cid,
+					},
+					FunctionName: xdr.ScSymbol("test"),
+					Args:         []xdr.ScVal{},
+				},
+			},
+			Auth: []xdr.SorobanAuthorizationEntry{},
+		},
+	}}
+}
+
+func extendFootprintTtlOp(t *testing.T) xdr.Operation {
+	t.Helper()
+	return xdr.Operation{Body: xdr.OperationBody{
+		Type: xdr.OperationTypeExtendFootprintTtl,
+		ExtendFootprintTtlOp: &xdr.ExtendFootprintTtlOp{
+			ExtendTo: xdr.Uint32(1000),
+		},
+	}}
+}
+
+// restoreFootprintOp builds a restoreFootprint operation.
+func restoreFootprintOp(t *testing.T) xdr.Operation {
+	t.Helper()
+	return xdr.Operation{Body: xdr.OperationBody{
+		Type:               xdr.OperationTypeRestoreFootprint,
+		RestoreFootprintOp: &xdr.RestoreFootprintOp{},
+	}}
+}
+
+func createAccountOp(t *testing.T) xdr.Operation {
+	t.Helper()
+	return xdr.Operation{Body: xdr.OperationBody{
+		Type: xdr.OperationTypeCreateAccount,
+		CreateAccountOp: &xdr.CreateAccountOp{
+			Destination:     mustAccountID(t, testDest),
+			StartingBalance: xdr.Int64(100_0000000),
+		},
+	}}
+}
+
+func pathPaymentStrictReceiveOp(t *testing.T) xdr.Operation {
+	t.Helper()
+	return xdr.Operation{Body: xdr.OperationBody{
+		Type: xdr.OperationTypePathPaymentStrictReceive,
+		PathPaymentStrictReceiveOp: &xdr.PathPaymentStrictReceiveOp{
+			SendAsset:   xdr.Asset{Type: xdr.AssetTypeAssetTypeNative},
+			SendMax:     xdr.Int64(100_0000000),
+			Destination: mustMuxed(t, testDest),
+			DestAsset:   creditAsset(t, "USDC"),
+			DestAmount:  xdr.Int64(50_0000000),
+			Path:        []xdr.Asset{},
+		},
+	}}
+}
+
+func manageSellOfferOp(t *testing.T) xdr.Operation {
+	t.Helper()
+	return xdr.Operation{Body: xdr.OperationBody{
+		Type: xdr.OperationTypeManageSellOffer,
+		ManageSellOfferOp: &xdr.ManageSellOfferOp{
+			Selling: creditAsset(t, "EURC"),
+			Buying:  xdr.Asset{Type: xdr.AssetTypeAssetTypeNative},
+			Amount:  xdr.Int64(100_0000000),
+			Price:   xdr.Price{N: xdr.Int32(1), D: xdr.Int32(1)},
+			OfferId: 0,
+		},
+	}}
+}
+
+func changeTrustOp(t *testing.T) xdr.Operation {
+	t.Helper()
+	return xdr.Operation{Body: xdr.OperationBody{
+		Type: xdr.OperationTypeChangeTrust,
+		ChangeTrustOp: &xdr.ChangeTrustOp{
+			Line:  creditAsset(t, "USDC").ToChangeTrustAsset(),
+			Limit: xdr.Int64(100_0000000),
+		},
+	}}
+}
+
+func allowTrustOp(t *testing.T) xdr.Operation {
+	t.Helper()
+	asset := creditAsset(t, "USDC")
+	var assetCode xdr.AssetCode
+	assetCode.Type = asset.Type
+	switch asset.Type {
+	case xdr.AssetTypeAssetTypeCreditAlphanum4:
+		assetCode.AssetCode4 = &asset.AlphaNum4.AssetCode
+	case xdr.AssetTypeAssetTypeCreditAlphanum12:
+		assetCode.AssetCode12 = &asset.AlphaNum12.AssetCode
+	}
+	return xdr.Operation{Body: xdr.OperationBody{
+		Type: xdr.OperationTypeAllowTrust,
+		AllowTrustOp: &xdr.AllowTrustOp{
+			Trustor:   mustAccountID(t, testDest),
+			Asset:     assetCode,
+			Authorize: xdr.Uint32(1),
+		},
+	}}
+}
+
+func accountMergeOp(t *testing.T) xdr.Operation {
+	t.Helper()
+	dest := mustMuxed(t, testDest)
+	return xdr.Operation{Body: xdr.OperationBody{
+		Type:        xdr.OperationTypeAccountMerge,
+		Destination: &dest,
+	}}
+}
+
+func inflationOp(t *testing.T) xdr.Operation {
+	t.Helper()
+	return xdr.Operation{Body: xdr.OperationBody{
+		Type: xdr.OperationTypeInflation,
+	}}
+}
+
+func manageDataOp(t *testing.T) xdr.Operation {
+	t.Helper()
+	return xdr.Operation{Body: xdr.OperationBody{
+		Type: xdr.OperationTypeManageData,
+		ManageDataOp: &xdr.ManageDataOp{
+			DataName:  xdr.String64("test"),
+			DataValue: ptr(xdr.DataValue([]byte("value"))),
+		},
+	}}
+}
+
+func bumpSequenceOp(t *testing.T) xdr.Operation {
+	t.Helper()
+	return xdr.Operation{Body: xdr.OperationBody{
+		Type: xdr.OperationTypeBumpSequence,
+		BumpSequenceOp: &xdr.BumpSequenceOp{
+			BumpTo: xdr.SequenceNumber(20000),
+		},
+	}}
+}
+
+func manageBuyOfferOp(t *testing.T) xdr.Operation {
+	t.Helper()
+	return xdr.Operation{Body: xdr.OperationBody{
+		Type: xdr.OperationTypeManageBuyOffer,
+		ManageBuyOfferOp: &xdr.ManageBuyOfferOp{
+			Selling:   xdr.Asset{Type: xdr.AssetTypeAssetTypeNative},
+			Buying:    creditAsset(t, "USDC"),
+			BuyAmount: xdr.Int64(100_0000000),
+			Price:     xdr.Price{N: xdr.Int32(1), D: xdr.Int32(1)},
+			OfferId:   0,
+		},
+	}}
+}
+
+func createPassiveSellOfferOp(t *testing.T) xdr.Operation {
+	t.Helper()
+	return xdr.Operation{Body: xdr.OperationBody{
+		Type: xdr.OperationTypeCreatePassiveSellOffer,
+		CreatePassiveSellOfferOp: &xdr.CreatePassiveSellOfferOp{
+			Selling: creditAsset(t, "USDC"),
+			Buying:  xdr.Asset{Type: xdr.AssetTypeAssetTypeNative},
+			Amount:  xdr.Int64(100_0000000),
+			Price:   xdr.Price{N: xdr.Int32(1), D: xdr.Int32(1)},
+		},
+	}}
+}
+
+func pathPaymentStrictSendOp(t *testing.T) xdr.Operation {
+	t.Helper()
+	return xdr.Operation{Body: xdr.OperationBody{
+		Type: xdr.OperationTypePathPaymentStrictSend,
+		PathPaymentStrictSendOp: &xdr.PathPaymentStrictSendOp{
+			SendAsset:   creditAsset(t, "USDC"),
+			SendAmount:  xdr.Int64(100_0000000),
+			DestMin:     xdr.Int64(50_0000000),
+			Destination: mustMuxed(t, testDest),
+			DestAsset:   xdr.Asset{Type: xdr.AssetTypeAssetTypeNative},
+			Path:        []xdr.Asset{},
+		},
+	}}
+}
+
+func createClaimableBalanceOp(t *testing.T) xdr.Operation {
+	t.Helper()
+	return xdr.Operation{Body: xdr.OperationBody{
+		Type: xdr.OperationTypeCreateClaimableBalance,
+		CreateClaimableBalanceOp: &xdr.CreateClaimableBalanceOp{
+			Asset:     creditAsset(t, "USDC"),
+			Amount:    xdr.Int64(100_0000000),
+			Claimants: []xdr.Claimant{unconditionalClaimant(t, testDest)},
+		},
+	}}
+}
+
+func claimClaimableBalanceOp(t *testing.T) xdr.Operation {
+	t.Helper()
+	return xdr.Operation{Body: xdr.OperationBody{
+		Type: xdr.OperationTypeClaimClaimableBalance,
+		ClaimClaimableBalanceOp: &xdr.ClaimClaimableBalanceOp{
+			BalanceId: claimableBalanceIDValue(1),
+		},
+	}}
+}
+
+func beginSponsoringFutureReservesOp(t *testing.T) xdr.Operation {
+	t.Helper()
+	return xdr.Operation{Body: xdr.OperationBody{
+		Type: xdr.OperationTypeBeginSponsoringFutureReserves,
+		BeginSponsoringFutureReservesOp: &xdr.BeginSponsoringFutureReservesOp{
+			SponsoredId: mustAccountID(t, testDest),
+		},
+	}}
+}
+
 // envelopeValue builds a minimal valid v1 envelope around the given
 // operations.
 func envelopeValue(tb testing.TB, ops ...xdr.Operation) xdr.TransactionEnvelope {
@@ -724,4 +1032,14 @@ func decodedResult(ops ...xdr.OperationResult) *lens.Value {
 			},
 		},
 	}
+}
+
+// creditAsset builds a credit asset with the test issuer.
+func creditAsset(t *testing.T, code string) xdr.Asset {
+	t.Helper()
+	var asset xdr.Asset
+	if err := asset.SetCredit(code, mustAccountID(t, testIssuer)); err != nil {
+		t.Fatalf("building asset %s: %v", code, err)
+	}
+	return asset
 }
